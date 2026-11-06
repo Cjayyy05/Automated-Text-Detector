@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "instant-stream-code-capture"
+version = "0.1.0"
+description = "Offline, chart-region promotional code recognition foundation for Windows"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy==2.5.4",
+  "opencv-python-headless==5.0.0.93",
+  "rapidocr==3.10.0",
+  "onnxruntime==1.31.1",
+]
+
+[project.optional-dependencies]
+windows = ["dxcam==0.3.0; sys_platform == 'win32'", "pywin32==312; sys_platform == 'win32'"]
+gui = ["PySide6==6.12.0; sys_platform == 'win32'"]
+dev = ["pytest==9.2.0", "ruff==0.17.3", "mypy==2.4.1"]
+
+[project.scripts]
+stream-code = "stream_code_capture.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stream_code_capture"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".tmp", "samples", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["rapidocr.*", "dxcam.*", "win32clipboard", "win32con", "onnxruntime.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["ocr: real offline RapidOCR inference; opt in with --run-ocr"]
