@@ -316,14 +316,45 @@ def test_baseline_progress_and_ready_reach_gui(window):
             "reason": "Recognizing baseline pixels",
             "captured": 1,
             "observations": 0,
+            "rejected": 2,
+            "ocr_ms": 1800,
         }
     )
     assert "Recognizing baseline pixels" in window.status.text()
     assert "1 changed frames" in window.stats.text()
+    assert "2 rejected" in window.stats.text() and "1800 ms" in window.stats.text()
     assert not window.arm.isEnabled()
     window.handle_event({"event": "ready"})
     assert window.arm.isEnabled() and "Ready" in window.status.text()
     window.controls = None
+
+
+def test_ocr_details_show_raw_read_and_decision_without_changing_state(window):
+    from stream_code_capture.policy import DecisionPolicy
+
+    policy = DecisionPolicy()
+    frame = {
+        "status": "confirming",
+        "code": None,
+        "candidates": ["Q8M4Z7P2VK"],
+        "lines": [
+            {
+                "text": "CODE: Q8M4Z7P2VK",
+                "confidence": 0.98,
+                "rejection": None,
+                "box": {"left": 0, "top": 0, "right": 300, "bottom": 24},
+            }
+        ],
+    }
+    detail = gui.describe_ocr(frame, policy)
+    window.handle_event({"event": "ocr_detail", "text": detail})
+    assert "CODE: Q8M4Z7P2VK" in window.ocr_detail.toPlainText()
+    assert "another changed frame" in detail
+    assert not window.armed
+    policy.suppressed.add("Q8M4Z7P2VK")
+    assert "suppressed by baseline" in gui.describe_ocr(frame, policy)
+    frame["lines"][0]["rejection"] = "insufficient_source_resolution"
+    assert "insufficient_source_resolution" in gui.describe_ocr(frame, policy)
 
 
 def test_scope_is_checked_before_guarded_clipboard_and_stops_on_failure():

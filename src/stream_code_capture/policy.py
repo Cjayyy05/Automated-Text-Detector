@@ -11,6 +11,7 @@ CODE = re.compile(r"(?=[A-Z0-9]{8,16}\Z)(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]+", re.ASC
 CONTEXT = re.compile(r"(?:\b\d{1,3}\s*%\s*off\b|\bpromo(?:tion)?\b|\buse\s+code\b)", re.I)
 GAME_CODE = re.compile(r"(?=.{8,20}\Z)(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]+(?:-[A-Z0-9]+)*", re.ASCII)
 GAME_CONTEXT = re.compile(r"expiry\s*date|redemption\s*code|有効期限|有效期至|兑换码|兌換碼", re.I)
+DISCOUNT_LABEL = "CODE:"
 
 
 @dataclass(frozen=True)
@@ -33,10 +34,16 @@ class PolicyConfig:
                 raise ValueError("timing limits must be finite and positive")
 
 
+def discount_code(text: str) -> str | None:
+    token = text.strip().removeprefix(DISCOUNT_LABEL).strip()
+    return token if CODE.fullmatch(token) else None
+
+
 def code_text(line: TextLine, profile: str = "discount") -> str | None:
     text = line.text.strip()
-    pattern = GAME_CODE if profile == "game" else CODE
-    return text if pattern.fullmatch(text) else None
+    if profile == "game":
+        return text if GAME_CODE.fullmatch(text) else None
+    return discount_code(text)
 
 
 def candidates(lines: list[TextLine], config: PolicyConfig) -> list[str]:
@@ -70,6 +77,23 @@ def candidates(lines: list[TextLine], config: PolicyConfig) -> list[str]:
                     and vertical_gap <= height * 2
                 ):
                     result.add(code)
+            continue
+        if line.text.strip().startswith(DISCOUNT_LABEL):
+            # Apply quality floors to the labelled form even with injected OCR.
+            if any(char in code for char in "O0") or (
+                (line.box.right - line.box.left) / len(line.text.strip()) < 10
+            ):
+                continue
+            for context in lines:
+                if (
+                    context.text.strip().upper() == "LIMITED TIME OFFER"
+                    and 0.75 <= context.confidence <= 1
+                    and not context.rejection
+                    and 0 <= line.box.top - context.box.bottom <= 2 * height
+                    and abs(line.box.left - context.box.left) <= height
+                ):
+                    result.add(code)
+                    break
             continue
         for context in lines:
             if context is line or not 0.75 <= context.confidence <= 1:

@@ -235,6 +235,8 @@ frame diagnostics and the final timing summary in JSONL.
 1. `start` begins capture and disarmed baseline collection.
 2. Wait for `ready` after at least 500 ms of baseline stability. A healthy unchanged
    region can establish readiness from its recognized initial image.
+   Moving regions use matching recognized code sets, with a bounded baseline-only
+   allowance for slow OCR. The GUI shows accepted/rejected reads and the last OCR time.
 3. `arm` enables one new-code decision. Dry-run emits `would_copy` and uses memory only.
 4. `disarm` inhibits writes, including results from OCR already in flight.
 5. `status` reports current state. `stop` or Ctrl+C stops capture and exits.

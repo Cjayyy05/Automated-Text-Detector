@@ -109,8 +109,13 @@ def test_idle_readiness_requires_consumed_observation_and_healthy_capture():
     assert not session.ready
 
 
-@pytest.mark.parametrize("intervening_change", [False, True])
-def test_slow_baseline_requires_current_unchanged_capture(monkeypatch, intervening_change):
+@pytest.mark.parametrize(
+    "age_ms,intervening_change,accepted",
+    [(1500, False, True), (1500, True, True), (2600, True, False), (2600, False, True)],
+)
+def test_slow_baseline_is_bounded_when_pixels_change(
+    monkeypatch, age_ms, intervening_change, accepted
+):
     from stream_code_capture import live
     from stream_code_capture.domain import Frame
 
@@ -119,7 +124,7 @@ def test_slow_baseline_requires_current_unchanged_capture(monkeypatch, interveni
 
     class Recognizer:
         def recognize(self, pixels):
-            clock[0] += 1_500_000_000
+            clock[0] += age_ms * 1_000_000
             session.worker.last_capture_poll_ns = clock[0]
             session.worker.captured += int(intervening_change)
             return [TextLine("AB23CD45EF", 0.999, Rect(0, 0, 140, 20))]
@@ -133,11 +138,84 @@ def test_slow_baseline_requires_current_unchanged_capture(monkeypatch, interveni
     pixels[:16] = 255
     session.consume(Frame(pixels, 1, clock[0]))
     session.ready_from_idle_baseline()
-    assert session.ready is not intervening_change
+    assert session.ready == (accepted and not intervening_change)
     assert session.clipboard.writes == []
-    if intervening_change:
-        assert session.baseline_count == 0
-        assert any(e["event"] == "baseline_stale" for e in events)
-    else:
-        assert session.policy.suppressed == {"AB23CD45EF"}
-        assert session.baseline_count == 1
+    assert session.policy.suppressed == {"AB23CD45EF"}
+    assert session.baseline_count == int(accepted)
+    assert any(e["event"] == "baseline_stale" for e in events) is not accepted
+
+
+@pytest.mark.parametrize("width,height,baseline_ocr_ms", [(760, 140, 80), (1920, 1000, 1800)])
+def test_moving_baseline_learns_visible_codes_but_armed_deadline_stays_strict(
+    monkeypatch, width, height, baseline_ocr_ms
+):
+    from stream_code_capture import live
+    from stream_code_capture.domain import Frame
+
+    clock = [1_000_000_000]
+    events = []
+    visible = []
+    delay_ms = baseline_ocr_ms
+    existing, during, new = "AB23CD45EF", "FG67HJ89KL", "ZX78UV23KL"
+
+    class Recognizer:
+        def recognize(self, image):
+            assert image.shape[:2] == (height, width)
+            clock[0] += delay_ms * 1_000_000
+            # The producer observes unrelated changes while OCR is in flight.
+            session.worker.captured += 1
+            session.worker.last_capture_poll_ns = clock[0]
+            return [
+                line
+                for index, code in enumerate(visible)
+                for line in (
+                    TextLine(code, 0.999, Rect(width - 160, index * 55, width, index * 55 + 20)),
+                    TextLine(
+                        "100% off",
+                        0.999,
+                        Rect(width - 160, index * 55 + 25, width - 60, index * 55 + 44),
+                    ),
+                )
+            ]
+
+    monkeypatch.setattr(live, "perf_counter_ns", lambda: clock[0])
+    controls = Controls()
+    session = LiveSession(
+        Recognizer(), LiveConfig(Rect(0, 0, width, height)), controls, events.append
+    )
+    session.pipeline.clock = lambda: clock[0]
+    session.running = True
+    session.started_ns = clock[0]
+
+    def observe(codes, ms=baseline_ocr_ms):
+        nonlocal delay_ms
+        visible[:] = codes
+        delay_ms = ms
+        clock[0] += 550_000_000
+        session.worker.captured += 1
+        pixels = np.full((height, width, 3), 120, np.uint8)
+        pixels[:16] = 255
+        pixels[-1, 0] = session.worker.captured % 255
+        session.consume(Frame(pixels, session.worker.captured, clock[0]))
+
+    observe([existing])
+    observe([existing, during])
+    observe([existing])
+    assert not session.ready  # A changing code set restarted the stability interval.
+    observe([existing])
+    assert session.ready and session.baseline_accepted == 4
+    assert session.policy.suppressed == {existing, during}
+    controls.send("arm")
+    session.handle_commands()
+    observe([existing, during], 80)
+    assert events[-1]["status"] == "no_candidate"
+    observe([new], 1300)
+    assert events[-1]["status"] == "stale"
+    observe([new], 80)
+    assert events[-1]["status"] == "confirming" and session.clipboard.writes == []
+    observe([new], 80)
+    assert session.clipboard.writes == [new] and not session.policy.armed
+    controls.send("arm")
+    session.handle_commands()
+    observe([new], 80)
+    assert session.clipboard.writes == [new]

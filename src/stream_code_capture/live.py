@@ -18,6 +18,8 @@ from .metrics import Metrics
 from .pipeline import Pipeline
 from .policy import DecisionPolicy, PolicyConfig, code_text
 
+MOVING_BASELINE_MAX_AGE_MS = 2500
+
 
 @dataclass(frozen=True)
 class LiveConfig:
@@ -126,6 +128,9 @@ class LiveSession:
         self.baseline_key: frozenset[str] | None = None
         self.baseline_count = 0
         self.baseline_sequence = 0
+        self.baseline_accepted = 0
+        self.baseline_rejected = 0
+        self.last_baseline_ocr_ms: float | None = None
         self.next_baseline_diagnostic_ns = 0
         self.baseline_reason = "Waiting for the first usable capture frame"
         self.active_generation = 0
@@ -199,6 +204,9 @@ class LiveSession:
         if not 0 <= (now - frame.captured_ns) / 1e6 <= self.config.max_frame_age_ms:
             self.policy.reset_pending()
             self.emit({"event": "stale_before_ocr", "sequence": frame.sequence})
+            if not self.ready:
+                self.baseline_rejected += 1
+                self.baseline_diagnostic("Waiting for a fresh baseline frame")
             return
         # Refuse nearly black/blank capture (not a DRM workaround).
         if float(np.std(frame.image[::8, ::8])) < 1:
@@ -213,8 +221,11 @@ class LiveSession:
             now = perf_counter_ns()
             baseline_ocr_ms = (now - baseline_ocr_started) / 1e6
             age = (now - frame.captured_ns) / 1e6
-            # Baseline learning cannot trigger a copy. Slow OCR may still describe
-            # current pixels if successful capture polls saw no intervening change.
+            self.last_baseline_ocr_ms = baseline_ocr_ms
+            self.metrics.add({"baseline_ocr": baseline_ocr_ms, "baseline_result_age": age})
+            # Keep suppression even for an over-budget observation. It can only
+            # prevent a copy, and cannot contribute to readiness or confirmation.
+            self.policy.learn_baseline(lines)
             unchanged_current = (
                 self.worker.captured == frame.sequence
                 and self.worker.last_capture_poll_ns >= frame.captured_ns
@@ -222,28 +233,29 @@ class LiveSession:
                 <= (now - self.worker.last_capture_poll_ns) / 1e6
                 <= self.config.max_frame_age_ms
             )
-            if age > self.config.max_frame_age_ms and not unchanged_current:
+            baseline_max_age = max(self.config.max_frame_age_ms, MOVING_BASELINE_MAX_AGE_MS)
+            if age > baseline_max_age and not unchanged_current:
                 self.baseline_start_ns, self.baseline_count = 0, 0
-                self.emit({"event": "baseline_stale"})
+                self.baseline_rejected += 1
+                self.emit({"event": "baseline_stale", "age_ms": age, "limit_ms": baseline_max_age})
                 self.baseline_diagnostic(
-                    "Baseline expired while pixels changed. Select a smaller region.",
+                    "Baseline read exceeded its time budget. Try a smaller region.",
                     force=True,
                 )
                 return
             key = frozenset(
                 text for line in lines if (text := code_text(line, self.config.profile))
             )
-            self.policy.learn_baseline(lines)
             if key != self.baseline_key or not self.baseline_start_ns:
                 self.baseline_start_ns, self.baseline_count = frame.captured_ns, 0
                 self.baseline_key = key
             self.baseline_count += 1
+            self.baseline_accepted += 1
             self.baseline_sequence = frame.sequence
-            self.baseline_reason = (
-                f"Baseline recognized in {baseline_ocr_ms:.0f} ms. Waiting for stable capture."
-            )
+            self.baseline_reason = "Baseline recognized. Waiting for stable code observations."
             elapsed = (frame.captured_ns - self.baseline_start_ns) / 1e6
             if elapsed >= self.config.baseline_ms and self.baseline_count >= 2:
+                self.baseline_diagnostic(force=True)
                 self.ready = True
                 self.emit(
                     {
@@ -288,7 +300,9 @@ class LiveSession:
                     "event": "baseline_progress",
                     "reason": self.baseline_reason,
                     "captured": self.worker.captured,
-                    "observations": self.baseline_count,
+                    "observations": self.baseline_accepted,
+                    "rejected": self.baseline_rejected,
+                    "ocr_ms": self.last_baseline_ocr_ms,
                 }
             )
 
@@ -304,6 +318,7 @@ class LiveSession:
             return
         elapsed = (self.worker.last_capture_poll_ns - self.baseline_start_ns) / 1e6
         if elapsed >= self.config.baseline_ms:
+            self.baseline_diagnostic(force=True)
             self.ready = True
             self.emit(
                 {
@@ -362,6 +377,8 @@ class LiveSession:
                     "failure": self.failure,
                     "dry_run": self.config.dry_run,
                     "captured": self.worker.captured,
+                    "baseline_accepted": self.baseline_accepted,
+                    "baseline_rejected": self.baseline_rejected,
                     "capture_initialization_ms": (
                         (self.worker.ready_ns - self.started_ns) / 1e6
                         if self.worker.ready_ns

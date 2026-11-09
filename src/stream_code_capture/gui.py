@@ -29,19 +29,56 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .capture import CaptureWorker, DxcamSource
-from .domain import Clipboard, Rect
+from .domain import Clipboard, Rect, TextLine
 from .live import Controls, LiveConfig, LiveSession
 from .native_scope import NativeScope
 from .notifications import CopySound, play_copy_sound, validate_sound_file
 from .ocr import RapidRecognizer
+from .policy import DecisionPolicy, code_text
 
 EventSink = Callable[[dict[str, Any]], None]
+
+
+def describe_ocr(event: dict[str, Any], policy: DecisionPolicy) -> str:
+    status = event["status"]
+    title = f"Last decision: {status}"
+    if status == "confirming":
+        title += " · another changed frame is required"
+    lines = [
+        TextLine(row["text"], row["confidence"], Rect(**row["box"]), row["rejection"])
+        for row in event["lines"]
+    ]
+    parsed = [(line, code_text(line, policy.config.profile)) for line in lines]
+    parsed.sort(key=lambda pair: pair[1] is None)
+    details = [title]
+    for line, code in parsed[:8]:
+        if line.rejection:
+            reason = line.rejection
+        elif code is None:
+            reason = "context or unsupported code format"
+        elif not policy.config.min_confidence <= line.confidence <= 1:
+            reason = "confidence outside required range"
+        elif code not in event["candidates"]:
+            reason = "context or quality requirements not met"
+        elif code in policy.suppressed:
+            reason = "suppressed by baseline"
+        elif code in policy.copied and code != event["code"]:
+            reason = "already copied"
+        else:
+            reason = "eligible candidate"
+        details.append(f"{line.text[:160]} [{line.confidence:.3f}] · {reason}")
+    if not lines:
+        details.append("No OCR text in this observation.")
+    elif len(lines) > 8:
+        details.append(f"{len(lines) - 8} additional lines omitted.")
+    return "\n".join(details)
 
 
 @dataclass(frozen=True)
@@ -267,11 +304,16 @@ def run_session(
         roi, device=monitor.device, output=monitor.output, profile=profile, dry_run=not native
     )
     next_stats = 0.0
+    last_ocr_detail = ""
     copy_sound = CopySound(controls, sound_path) if native and sound else None
 
     def forward(event: dict[str, Any]) -> None:
-        nonlocal next_stats
+        nonlocal next_stats, last_ocr_detail
         if event["event"] == "frame":
+            detail = describe_ocr(event, session.policy)
+            if detail != last_ocr_detail:
+                last_ocr_detail = detail
+                emit({"event": "ocr_detail", "text": detail})
             if copy_sound is not None:
                 copy_sound.notify(event)
             if event["status"] in {"copied", "would_copy", "clipboard_failed"}:
@@ -288,7 +330,10 @@ def run_session(
                         "armed": session.policy.armed,
                     }
                 )
-        elif event["event"] not in {"baseline_stale", "stale_before_ocr"}:
+        elif event["event"] == "stale_before_ocr":
+            last_ocr_detail = ""
+            emit({"event": "ocr_detail", "text": "Last decision: stale frame rejected before OCR."})
+        elif event["event"] != "baseline_stale":
             emit(event)
 
     if scope is None:
@@ -330,6 +375,13 @@ class Window(QWidget):
         self.capture_info = QLabel("Capture: select a monitor")
         self.clipboard_info = QLabel("Clipboard: memory · dry run")
         self.error = QLabel()
+        self.show_ocr = QCheckBox("Show last OCR results")
+        self.ocr_detail = QPlainTextEdit()
+        self.ocr_detail.setReadOnly(True)
+        self.ocr_detail.setMaximumHeight(120)
+        self.ocr_detail.setPlainText("No monitoring observation yet.")
+        self.ocr_detail.hide()
+        self.show_ocr.toggled.connect(self.ocr_detail.setVisible)
         self.native = QCheckBox("Use Windows clipboard for this session")
         self.sound = QCheckBox("Play sound when code is copied")
         self.choose_sound = QPushButton("Choose sound")
@@ -402,6 +454,8 @@ class Window(QWidget):
         ):
             diagnostic_layout.addWidget(label)
         layout.addWidget(diagnostics)
+        layout.addWidget(self.show_ocr)
+        layout.addWidget(self.ocr_detail)
         self.monitor.currentIndexChanged.connect(self.clear_preview)
         self.canvas.selected.connect(self.region_selected)
         self.canvas.invalid.connect(self.error.setText)
@@ -524,6 +578,7 @@ class Window(QWidget):
         self.error.clear()
         self.code.setText("Last confirmed code: —")
         self.stats.setText("Processing statistics will appear here")
+        self.ocr_detail.setPlainText("No monitoring observation yet.")
         self.ocr_info.setText("OCR provider/model: initializing and verifying local sessions…")
         self.status.setText("Warming up OCR · Disarmed")
         if native:
@@ -573,6 +628,8 @@ class Window(QWidget):
         kind = event["event"]
         if kind == "session_info":
             self.ocr_info.setText(f"OCR: {event['provider']} · " + " / ".join(event["models"]))
+        elif kind == "ocr_detail":
+            self.ocr_detail.setPlainText(event["text"])
         elif kind == "monitors":
             self.monitor_list = event["items"]
             for item in self.monitor_list:
@@ -590,10 +647,13 @@ class Window(QWidget):
                 self.ready = True
             elif kind == "baseline_progress" and not self.ready:
                 self.status.setText(f"Running · Building baseline · {event['reason']}")
-                self.stats.setText(
+                stats = (
                     f"Captured {event['captured']} changed frames · "
-                    f"{event['observations']} accepted baseline observations"
+                    f"Baseline {event['observations']} accepted, {event['rejected']} rejected"
                 )
+                if event["ocr_ms"] is not None:
+                    stats += f" · Last baseline OCR {event['ocr_ms']:.0f} ms"
+                self.stats.setText(stats)
             elif kind in {"armed", "disarmed", "arm_rejected"}:
                 self.armed, self.arm_pending = kind == "armed", False
                 if kind == "arm_rejected":

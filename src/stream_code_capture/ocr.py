@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from .domain import Image, Recognition, Rect, TextLine
-from .policy import CODE, PolicyConfig, candidates, code_text
+from .policy import PolicyConfig, candidates, code_text, discount_code
 
 PROVIDERS = {
     "cpu": "CPUExecutionProvider",
@@ -326,10 +326,11 @@ class RapidRecognizer:
             # Upsampling cannot restore lost source pixels. This is a conservative
             # quality floor, not evidence that larger text is necessarily correct.
             text = str(text)
+            token = discount_code(text)
             pitch = float(np.linalg.norm(points[1] - points[0])) / max(1, len(text.strip()))
             rejection = (
                 "insufficient_source_resolution"
-                if CODE.fullmatch(text.strip()) and pitch < self.min_code_pitch
+                if token is not None and pitch < self.min_code_pitch
                 else None
             )
             # The varied corpus shows high-confidence errors in BOTH directions,
@@ -339,8 +340,8 @@ class RapidRecognizer:
             if (
                 rejection is None
                 and self.ambiguity_guard
-                and CODE.fullmatch(text.strip())
-                and any(character in text for character in "O0")
+                and token is not None
+                and any(character in token for character in "O0")
             ):
                 rejection = "unresolved_O0_glyph"
             lines.append(

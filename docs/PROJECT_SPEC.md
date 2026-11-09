@@ -56,7 +56,8 @@ Example strings are not runtime allowlists or denylists.
 2. Recognize pixels locally using warmed RapidOCR/ONNX models. Upscale small text, use
    detector quadrilaterals and RapidOCR's perspective crop for recognition of slanted lines.
 3. Preserve exact ASCII uppercase alphanumeric codes. Initial format: 8–16 characters,
-   at least one letter and digit. Require nearby promotional context below the code.
+   at least one letter and digit. Require nearby promotional context. The bare-code
+   layout uses context below. The labelled annotation layout uses a heading above.
    The opt-in game profile extends this to 8–20 characters with internal hyphens and
    nearby redemption/expiry context. Other formats remain unsupported; O/0 abstains.
 4. Start disarmed. Observe a baseline before arming. Suppress baseline codes regardless
@@ -122,10 +123,13 @@ alive without publishing an OCR observation. Live baseline readiness may use a v
 recognized frame followed by at least the configured baseline interval of healthy,
 unchanged capture polls. Any newer pending changed frame must be processed first.
 Idle stability never supplies an armed code-confirmation observation.
-If baseline OCR exceeds the frame-age budget, its suppression-only result may be
-learned only when capture reports no intervening ROI change and a successful poll is
-within the existing freshness limit. Changed or unhealthy capture rejects the result.
-Armed recognition and clipboard writes always retain the original frame deadlines.
+Disarmed baseline OCR starts only on frames inside the configured frame-age budget.
+Completed baseline reads can add suppression while capture remains healthy. Moving
+baseline readiness accepts results up to 2500 ms old by default and still requires
+two matching recognized code sets spanning the baseline interval. Over-budget reads
+can suppress observed codes but cannot establish readiness. Healthy unchanged capture
+retains its baseline revalidation path. Armed recognition and clipboard writes keep
+their original frame deadlines. Unsampled or unrecognized codes cannot be suppressed.
 Camera initialization has a separate bounded 10-second allowance and is reported separately.
 Window identity/occlusion and fast content changes are not fully detected; see manual matrix.
 
@@ -137,6 +141,13 @@ and context no more than ten code heights below. It recognizes `N% off`, `promo`
 `use code`, without requiring the reference product name. No O/0, I/1, B/8 repairs.
 These conservative rules can miss real codes and can still accept a plausible wrong OCR
 string. Confidence is a model score, not a guarantee. Two correlated errors may agree.
+
+The Discount profile also accepts the exact `CODE: <token>` line format with a nearby,
+left-aligned `LIMITED TIME OFFER` heading above it. The heading gap is at most twice
+the code-line height and horizontal offset at most one line height. The token retains
+the existing code alphabet, confidence, source-pitch and O/0 guards. Baseline learning
+uses the extracted token for suppression. The label does not alter confirmation or
+freshness requirements.
 
 Current source-quality guard: code-like lines with detector top-edge pitch <10 original
 pixels/character carry `insufficient_source_resolution` and cannot become candidates.
