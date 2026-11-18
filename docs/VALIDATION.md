@@ -4,6 +4,19 @@ See [v0.2.0 detection policy validation](DETECTION_POLICY_VALIDATION.md) for the
 2026-11-18 before/after accuracy and latency evidence and the operator-reported
 native clipboard pass.
 
+## Validation records
+
+- [Windows verification](WINDOWS_VALIDATION.md), [native clipboard tests](PHASE5_VALIDATION.md),
+  [memory comparison](PHASE51_VALIDATION.md), [display inventory](PHASE52_VALIDATION.md), and
+  [GUI verification](PHASE6_VALIDATION.md)
+- [Capture benchmarks](PHASE4_VALIDATION.md), [large-region profiling](ARMED_ROI_VALIDATION.md),
+  [profiling follow-up](ARMED_ROI_FOLLOWUP.md), and [experimental OCR paths](PHASE2_VALIDATION.md)
+- [Dataset workflow](DATASET_WORKFLOW.md), [Game results](GAME_PROFILE_VALIDATION.md),
+  [Discount layouts](DISCOUNT_LAYOUT_VALIDATION.md), [Discount accuracy](DISCOUNT_ACCURACY_VALIDATION.md),
+  and [simulator verification](SIMULATOR_VALIDATION.md)
+
+## Foundation record
+
 For the v0.1.0 Git baseline checks and qualification summary, see
 [BASELINE_VALIDATION.md](BASELINE_VALIDATION.md). This file preserves the foundation
 results; its pending statuses describe that earlier checkpoint.
@@ -43,7 +56,7 @@ PowerShell scripts; a later successful shell command must not conceal an earlier
 |---|---|
 | `git status --short`; `git log -1 --oneline`; `Get-ChildItem -Force` | Empty working tree, no commits, only `.git` |
 | `python --version`; `py -0p` | Failed: inaccessible Windows Store aliases |
-| `& 'C:\Users\Teoh Chung Jay\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' --version` | Python 3.12.14 |
+| `& '<bundled Python 3.12 executable>' --version` | Python 3.12.14 |
 | Same executable with `-m venv .venv` | Initial ensurepip failed on sandbox temp permissions |
 | `$env:TEMP = Join-Path (Get-Location) '.tmp'; $env:TMP = $env:TEMP; ./.venv/Scripts/python.exe -m ensurepip --upgrade` | Passed after creating `.tmp` |
 | `./.venv/Scripts/python.exe -m pip install --disable-pip-version-check -e '.[dev,windows]'` | Installed successfully after network-enabled execution |
@@ -51,7 +64,7 @@ PowerShell scripts; a later successful shell command must not conceal an earlier
 | `./.venv/Scripts/python.exe -m pip install --force-reinstall --no-deps opencv-python-headless==5.0.0.93` | Repaired shared cv2 files; project now depends only on headless |
 | `./.venv/Scripts/python.exe -m pip install -e '.[dev,windows]'` | Refreshed final metadata successfully |
 | `./.venv/Scripts/python.exe -m pip freeze --exclude-editable` | Saved exact resolution as `requirements-lock.txt` |
-| `./scripts/setup.ps1 -Python 'C:\Users\Teoh Chung Jay\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'` | Final setup script verified, exit 0; frozen constraints installed, pip check clean |
+| `./scripts/setup.ps1 -Python '<bundled Python 3.12 executable>'` | Final setup script verified, exit 0; frozen constraints installed, pip check clean |
 | `./scripts/check.ps1 -Ocr` | Exit 0; pip check clean; Ruff lint/format clean; strict mypy clean (10 source modules); **35 tests passed in 23.94 s** |
 | `./.venv/Scripts/python.exe -m stream_code_capture generate samples/smoke --seed 7 --count 3` | Exit 0; 20 PNGs, 3 positive cases + 1 negative case and manifest |
 | `./.venv/Scripts/python.exe -m stream_code_capture replay samples/smoke/manifest.json --arm` | Exit 0; 3 exact one-shot memory writes, zero negative/JORDY writes |
