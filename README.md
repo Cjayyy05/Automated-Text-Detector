@@ -97,7 +97,7 @@ the countdown. The simulator records reveal timestamps locally.
 ./.venv/Scripts/python.exe scripts/livestream_code_simulator.py
 ```
 
-![Livestream Code Simulator on Windows, showing formatting controls and sample text](docs/images/simulator.png)
+![Livestream Code Simulator on Windows showing a fictional livestream offer on a dark background](docs/images/simulator.png)
 
 [Simulator validation](docs/SIMULATOR_VALIDATION.md)
 
