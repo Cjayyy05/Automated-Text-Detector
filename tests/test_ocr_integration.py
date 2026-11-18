@@ -30,7 +30,7 @@ def test_actual_offline_ocr_chart_sequence(tmp_path, monkeypatch):
     for case in manifest["cases"]:
         clipboard = MemoryClipboard()
         # Accuracy gate uses a generous offline budget, never a live latency assertion.
-        policy = DecisionPolicy(PolicyConfig(max_frame_age_ms=10000, confirmation_window_ms=10000))
+        policy = DecisionPolicy(PolicyConfig(max_frame_age_ms=10000))
         pipeline = Pipeline(recognizer, clipboard, Rect(*manifest["roi"]), policy)
         observations = []
         for seq, item in enumerate(case["frames"]):

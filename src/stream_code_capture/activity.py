@@ -15,7 +15,7 @@ class ActivityGate:
         self.last_scan_ns: int | None = None
         self.previous: np.ndarray[tuple[int, ...], np.dtype[np.bool_]] | None = None
 
-    def should_scan(self, image: Image, now_ns: int, *, confirming: bool = False) -> bool:
+    def should_scan(self, image: Image, now_ns: int) -> bool:
         # Bright, approximately achromatic strokes exclude many colored candles.
         # Colored/low-contrast text can be absent from this hint: always scan on a
         # deadline measured from the last SCAN, never from the latest motion.
@@ -27,7 +27,7 @@ class ActivityGate:
         changed = self.previous is None or not np.array_equal(mask, self.previous)
         expired = self.last_scan_ns is None or now_ns - self.last_scan_ns >= self.interval_ns
         self.previous = mask
-        if changed or expired or confirming:
+        if changed or expired:
             self.last_scan_ns = now_ns
             return True
         return False

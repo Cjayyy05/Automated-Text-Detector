@@ -23,17 +23,19 @@ def annotation(code=CODE):
     ]
 
 
-def test_labelled_discount_requires_nearby_offer_heading_and_quality():
+def test_labelled_code_can_stand_alone_but_still_requires_quality():
     heading, code = annotation()
     config = PolicyConfig()
     assert candidates([heading, code], config) == [CODE]
-    assert candidates([code], config) == []
-    assert candidates([TextLine("CHAT MESSAGE", 0.99, heading.box), code], config) == []
-    assert candidates([TextLine(heading.text, 0.99, Rect(17, 140, 292, 165)), code], config) == []
+    assert candidates([code], config) == [CODE]
+    assert candidates([TextLine("CHAT MESSAGE", 0.99, heading.box), code], config) == [CODE]
+    assert candidates([TextLine(heading.text, 0.99, Rect(17, 200, 292, 225)), code], config) == [
+        CODE
+    ]
     assert candidates([heading, TextLine(code.text, 0.95, code.box)], config) == []
     assert candidates([heading, TextLine(code.text, 0.98, Rect(17, 74, 140, 100))], config) == []
-    assert candidates(annotation("Q8M4Z0P2VK"), config) == []
-    assert candidates([heading, code], PolicyConfig(profile="game")) == []
+    assert candidates(annotation("Q8M4Z0P2VK"), config) == ["Q8M4Z0P2VK"]
+    assert candidates([heading, code], PolicyConfig(profile="game")) == [CODE]
 
 
 def test_labelled_baseline_suppresses_exact_token():
@@ -49,7 +51,7 @@ def test_labelled_baseline_suppresses_exact_token():
     "token,scale,stroke,rejection",
     [
         (CODE, 0.95, 2, None),
-        ("Q8M4Z0P2VK", 0.95, 2, "unresolved_O0_glyph"),
+        ("Q8M4Z0P2VK", 0.95, 2, None),
         (CODE, 0.44, 1, "insufficient_source_resolution"),
     ],
 )
@@ -74,8 +76,9 @@ def test_blue_annotation_recognition_and_quality_guards(token, scale, stroke, re
     assert candidates(lines, PolicyConfig()) == ([] if rejection else [token])
 
 
-def test_static_labelled_appearance_needs_a_second_changed_frame():
-    revealed, changed, closed = Event(), Event(), Event()
+@pytest.mark.parametrize("activity_gate_ms", [0, 500])
+def test_static_labelled_appearance_copies_without_a_second_changed_frame(activity_gate_ms):
+    revealed, primed, closed = Event(), Event(), Event()
     events = []
     controls = Controls()
 
@@ -84,7 +87,7 @@ def test_static_labelled_appearance_needs_a_second_changed_frame():
             image = np.full((135, 440, 3), 26, np.uint8)
             image[:16] = 170
             image[32, 32] = int(revealed.is_set())
-            image[-1, 0] = int(changed.is_set())
+            image[48, 32] = int(primed.is_set())
             return image
 
         def close(self):
@@ -96,7 +99,11 @@ def test_static_labelled_appearance_needs_a_second_changed_frame():
 
     worker = CaptureWorker(Source)
     session = LiveSession(
-        Recognizer(), LiveConfig(Rect(0, 0, 440, 135)), controls, events.append, worker
+        Recognizer(),
+        LiveConfig(Rect(0, 0, 440, 135), activity_gate_ms=activity_gate_ms),
+        controls,
+        events.append,
+        worker,
     )
 
     def until(predicate):
@@ -112,14 +119,16 @@ def test_static_labelled_appearance_needs_a_second_changed_frame():
         until(lambda: session.ready)
         controls.send("arm")
         until(lambda: session.policy.armed)
+        if activity_gate_ms:
+            primed.set()
+            until(lambda: any(e.get("status") == "no_candidate" for e in events))
         revealed.set()
-        until(lambda: any(event.get("status") == "confirming" for event in events))
+        until(lambda: session.clipboard.writes == [CODE])
         count = worker.captured
         sleep(0.15)
-        assert worker.captured == count and session.clipboard.writes == []
+        assert worker.captured == count
+        assert session.activity_skipped == int(bool(activity_gate_ms))
         assert CODE not in session.policy.suppressed
-        changed.set()
-        until(lambda: session.clipboard.writes == [CODE])
         assert not session.policy.armed
     finally:
         controls.send("stop")

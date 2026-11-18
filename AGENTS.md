@@ -16,8 +16,9 @@ or network requests during recognition. Pin dependencies and verify APIs against
 versions and primary documentation. Model provisioning is setup-time only; fail closed if
 models or providers are missing. Keep a reproducible model hash record.
 
-Preserve explicit disarmed startup, baseline-before-arm, conservative exact-string policy,
-same-code deduplication, one-shot copy, stale rejection, and clipboard-error disarming.
+Preserve explicit disarmed startup, baseline-before-arm, single-observation exact-string policy,
+same-code deduplication, one-shot copy, stale rejection, clipboard readback verification,
+and clipboard-error disarming.
 Never silently change case or substitute ambiguous characters. Threshold changes require
 held-out accuracy evidence; OCR confidence is not a calibrated exact-code probability.
 The pipeline and policy have a single owner thread. UI commands must be marshalled to it.
@@ -28,11 +29,12 @@ clipboard. Label fixtures, mock timings, replay timings, and captured-frame meas
 accurately. Never claim DXcam, clipboard, GPU, accuracy, or <100 ms success without evidence.
 
 The capture phase must deliver owned BGR frames through a capacity-one/latest handoff.
-Do not queue OCR jobs or count reused DXcam frames as independent confirmations. Keep one
+Do not queue OCR jobs or treat reused DXcam frames as fresh observations. Keep one
 warmed OCR instance per worker; no model initialization or downloads in the hot path.
 Measure before adding caches, GPU code, alternate models, tracking, or concurrency.
 Keep experimental profiles opt-in until recall matches or exceeds the default on held-out
-inputs. Never bypass the O/0 abstention or source-resolution guard with a fallback model.
+inputs. Copy eligible O/0 readings verbatim. Keep the source-resolution guard and
+independent verification for experimental fast-model native copying.
 Synthetic font templates are diagnostics, not proof that arbitrary broadcast text is correct.
 
 Run `./scripts/check.ps1` after changes; run `./scripts/check.ps1 -Ocr` for OCR/policy/fixture

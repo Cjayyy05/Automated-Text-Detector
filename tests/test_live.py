@@ -10,7 +10,7 @@ from stream_code_capture.domain import Frame, Rect, TextLine
 from stream_code_capture.live import Controls, GuardedClipboard, LiveConfig, LiveSession
 from stream_code_capture.metrics import Metrics
 from stream_code_capture.pipeline import Pipeline
-from stream_code_capture.policy import DecisionPolicy, PolicyConfig
+from stream_code_capture.policy import DecisionPolicy
 
 
 class Recognizer:
@@ -36,7 +36,7 @@ def test_control_during_ocr_prevents_clipboard_write(command):
 
     controls, target = Controls(), MemoryClipboard()
     controls.inhibit.clear()
-    policy = DecisionPolicy(PolicyConfig(confirmations=1))
+    policy = DecisionPolicy()
     policy.learn_baseline([])
     policy.arm()
     pipeline = Pipeline(
@@ -136,7 +136,7 @@ def test_identical_roi_frames_do_not_confirm_reused_pixels():
     assert worker.captured == 1 and worker.duplicates >= 9
 
 
-def test_baseline_requires_multiple_stable_observations_and_half_second():
+def test_baseline_requires_multiple_observations_and_half_second():
     controls, events = Controls(), []
     session = LiveSession(Recognizer(), LiveConfig(Rect(0, 0, 150, 60)), controls, events.append)
     session.running = True
@@ -154,6 +154,25 @@ def test_baseline_requires_multiple_stable_observations_and_half_second():
     session.handle_commands()
     session.consume(Frame(pixels, 4, perf_counter_ns()))
     assert not session.clipboard.writes  # Persistent code is not a new arrival.
+
+
+def test_frame_captured_before_arm_cannot_copy():
+    controls, events = Controls(), []
+    session = LiveSession(Recognizer(), LiveConfig(Rect(0, 0, 150, 60)), controls, events.append)
+    session.running = session.ready = True
+    session.started_ns = perf_counter_ns()
+    session.policy.learn_baseline([])
+    pixels = np.indices((60, 150)).sum(axis=0).astype(np.uint8)
+    pixels = np.repeat(pixels[:, :, None], 3, axis=2)
+    pending = Frame(pixels, 1, perf_counter_ns())
+    controls.send("arm")
+    session.handle_commands()
+    session.consume(pending)
+    assert session.policy.armed and session.clipboard.writes == []
+    with pytest.raises(RuntimeError, match="Blank"):
+        session.consume(Frame(np.zeros_like(pixels), 1, pending.captured_ns))
+    session.consume(Frame(pixels, 2, perf_counter_ns()))
+    assert not session.policy.armed and session.clipboard.writes == ["AB23CD45EF"]
 
 
 def test_saturation_cannot_drop_stop_or_disarm_inhibition():

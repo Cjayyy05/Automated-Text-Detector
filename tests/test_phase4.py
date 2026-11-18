@@ -25,14 +25,11 @@ def test_confirmation_elapsed_time_is_separate_from_first_capture_age():
     pipeline = Pipeline(recognizer, memory, Rect(0, 0, 150, 60), policy, lambda: recognizer.now)
     pixels = np.zeros((60, 150, 3), np.uint8)
     first = pipeline.process(Frame(pixels, 1, recognizer.now))
-    assert first.status == "confirming" and not memory.writes
+    assert first.status == "copied" and memory.writes == ["AB23CD45EF"]
     assert first.recognized_ns == 300_000_000
-    recognizer.now = 320_000_000
-    second = pipeline.process(Frame(pixels, 2, recognizer.now))
-    assert second.status == "copied" and memory.writes == ["AB23CD45EF"]
-    assert second.timings_ms["first_recognition_to_confirmation"] == 220
-    assert second.timings_ms["first_observed_to_clipboard"] == 420
-    assert policy.first_recognized_ns is None  # Successful one-shot clears pending evidence.
+    assert first.timings_ms["first_recognition_to_confirmation"] == 0
+    assert first.timings_ms["first_observed_to_clipboard"] == 200
+    assert not policy.armed
 
 
 def test_stale_exact_observation_does_not_supply_confirmation_evidence():
@@ -43,13 +40,8 @@ def test_stale_exact_observation_does_not_supply_confirmation_evidence():
         TextLine("AB23CD45EF", 0.99, Rect(5, 5, 145, 25)),
         TextLine("100% off", 0.99, Rect(5, 35, 145, 55)),
     ]
-    assert policy.observe(lines, 1, 1, 1_100_000_001)[0] == "stale"
-    assert policy.first_recognized_ns is None
-    assert policy.observe(lines, 2, 1_200_000_000, 1_400_000_000)[0] == "confirming"
-    assert policy.first_recognized_ns == 1_400_000_000
-    assert policy.observe(lines, 3, 1_500_000_000, 1_700_000_000)[0] == "ready"
-    policy.disarm()
-    assert policy.first_recognized_ns is None
+    assert policy.observe(lines, 1, 1, 3_100_000_001) == ("stale", None)
+    assert policy.observe(lines, 2, 4_200_000_000, 5_500_000_000) == ("ready", "AB23CD45EF")
 
 
 def test_stimulus_motion_remains_inside_roi_for_every_exposure(monkeypatch):

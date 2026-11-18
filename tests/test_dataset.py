@@ -229,7 +229,7 @@ def test_unknown_annotations_block_evaluation(tmp_path):
         evaluate(path, PixelRecognizer())
 
 
-def test_duplicate_roi_cannot_supply_second_confirmation(tmp_path):
+def test_static_reveal_copies_once_and_skips_duplicate_roi(tmp_path):
     path = make_dataset(tmp_path / "data")
     data = json.loads(path.read_text())
     frame = deepcopy(data["frames"][1])
@@ -238,5 +238,5 @@ def test_duplicate_roi_cannot_supply_second_confirmation(tmp_path):
     path.write_text(json.dumps(data))
     result = evaluate(path, PixelRecognizer())
     assert result["accuracy"]["duplicate_roi_frames"] == 1
-    assert result["accuracy"]["abstentions"] == 1
-    assert result["events"][0]["writes"] == []
+    assert result["accuracy"]["abstentions"] == 0
+    assert result["events"][0]["writes"] == ["AB23CD45EF"]

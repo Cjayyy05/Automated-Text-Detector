@@ -1,46 +1,23 @@
 # Instant Stream Code Capture — project specification
 
-Status: offline foundation plus live console integration. Python 3.12, Windows 11 x64.
-An explicit `game` detection profile now shares this pipeline; `discount` remains the
-default. Game requires nearby redemption/expiry context, 8–20 uppercase ASCII characters
-with optional internal hyphens, both letters and digits, and the same lifecycle safeguards.
-Its additional policy guard prevents hyphens/longer strings bypassing O/0 or source-size
-restrictions. No OCR/model changes. See `GAME_PROFILE_VALIDATION.md`; simulated captured
-playback is a functional test of reused slides, not general livestream qualification.
-Real DXcam -> OCR -> native clipboard passed three generated-screen events; a separate
-30-event real-capture dry-run passed. The operator signed off G2 for the limited
-personal-use scope below on 2026-11-05 MYT, after 30 exact manual native paste matches.
-Phase 6 now supports explicit per-session GUI native-copy opt-in, with dry-run startup.
-GUI integration paste validation remains separate from the signed-off pipeline evidence.
-The final G3 and G4 requirements continue to apply.
+Status: v0.2.0, Windows 11 x64, Python 3.12. The detector prioritizes the first exact copy from a
+reliable observation. Discount and Game share one policy, with optional hyphens and
+game redemption/expiry phrases in Game. The OCR model, display scope and GUI controls
+carry forward from the previous build. The revised policy recovers more exact codes
+and can also copy incorrect OCR readings. See [detection policy validation](DETECTION_POLICY_VALIDATION.md).
 
-Phase 5.2 reviews remaining G2 usability evidence and inventories current Windows displays
-read-only. See `PHASE52_VALIDATION.md`, `PHASE52_MANUAL_CHECKLIST.md` and the blank manual
-results record. Inventory and automated clipboard readback are not manual ROI/paste passes.
-Limited-scope G2 sign-off does not complete the broader display matrix or G3/G4.
+The operator signed off G2 for limited personal use on 2026-11-05 MYT after 30 exact
+manual native paste matches. Phase 6 added explicit per-session GUI native-copy opt-in
+and followed with GUI paste smoke checks. The operator also reported a PASS for native
+Windows clipboard copying on the v0.2.0 build. Broader G2/G3/G4 qualification remains open.
+See [Windows validation](WINDOWS_VALIDATION.md) and [Phase 6 validation](PHASE6_VALIDATION.md).
 
-Phase 4 adds configuration/second-model diagnostics and a reproducible captured short-exposure
-matrix for both profiles. An opt-in CPU configuration improves the reused game-slide latency
-without replacing models or weakening confirmation. Default behavior is retained pending
-representative validation. New timing fields separate candidate-validation/confirmation CPU
-work from first-recognition-to-confirmation elapsed time. See `PHASE4_VALIDATION.md` for
-measurements, the legacy harness disarm artifact, and actual versus nominal exposure timing.
-
-Phase 2 retains the default model and adds opt-in tiny/cascade CPU experiments, stage/ORT
-profiling, pre-OCR stale rejection, notified latest-frame delivery and precise Windows pacing.
-The varied corpus exposed high-confidence O/0 errors above the original resolution floor:
-runtime now explicitly abstains on code-like strings containing either glyph. It does not
-substitute characters. This loses valid-code recall and is not a recognition fix. The original
-three challenge xfails and G3 block remain. See [Phase 2 evidence](PHASE2_VALIDATION.md).
-Activity filtering is optional and must force periodic OCR despite background motion;
-pending confirmations bypass it. Fallback must never override a quality rejection.
-
-Phase 3 provides offline source preparation, exact labelling, session/identity/hash-disjoint
-splits and separate raw-recognition versus clipboard-policy scoring. No runtime recognition
-or safety threshold changes were justified by the available synthetic data. Representative
-real-video qualification is blocked on user-provided media and independent labels. The Phase 3
-exploratory target is >=90% exact recall with zero observed incorrect writes; the stricter
-G3 release criteria below remain unchanged. See `DATASET_WORKFLOW.md` and `PHASE3_VALIDATION.md`.
+Phase 2 documents previous O/0 errors, CPU model experiments, and last-frame-age
+instrumentation. Its blanket ambiguity abstention is historical. The three strict
+challenge xfails and 10 px/character guard remain. Phase 3 added exact labels,
+source/session-disjoint splits, and raw-recognition versus policy scoring. Independent
+real-video qualification requires permitted media and independent transcription.
+[Phase 2 evidence](PHASE2_VALIDATION.md) · [Dataset workflow](DATASET_WORKFLOW.md)
 
 ## User outcome and requirements
 
@@ -55,14 +32,13 @@ Example strings are not runtime allowlists or denylists.
    Detect text positions automatically inside that ROI; no absolute target-code coordinates.
 2. Recognize pixels locally using warmed RapidOCR/ONNX models. Upscale small text, use
    detector quadrilaterals and RapidOCR's perspective crop for recognition of slanted lines.
-3. Preserve exact ASCII uppercase alphanumeric codes. Initial format: 8–16 characters,
-   at least one letter and digit. Require nearby promotional context. The bare-code
-   layout uses context below. The labelled annotation layout uses a heading above.
-   The opt-in game profile extends this to 8–20 characters with internal hyphens and
-   nearby redemption/expiry context. Other formats remain unsupported; O/0 abstains.
-4. Start disarmed. Observe a baseline before arming. Suppress baseline codes regardless
-   of nearby context; require exact agreement on two distinct, consecutive observations.
-   Ambiguity, stale/out-of-order frames, blank frames, and changed text reset agreement.
+3. Extract an exact ASCII token of 6–24 characters with letters and digits, preserving
+   case, O and 0. Game also permits internal hyphens. Explicit labels and nearby
+   promotional text support shorter or more word-like formats. Strong standalone codes
+   can qualify without adjacent text.
+4. Start disarmed and collect a baseline before arming. A single fresh observation with
+   one eligible new code can confirm. Reject stale or unordered frames. Exact matches to
+   tokens collected while disarmed or successfully copied earlier are ineligible.
 5. Copy once per explicit arm. Remember copied strings for the process lifetime, including
    across rearm. Do not retry a failed clipboard write without rearming. Report failures.
 6. Consume the newest available captured frame, with at most one pending frame and one
@@ -81,7 +57,7 @@ flowchart LR
     DX[DXcam region capture producer] --> SLOT[Capacity-one newest owned frame]
     SLOT --> ROI
     ROI --> OCR[Upscale + text detection + perspective recognition]
-    OCR --> POLICY[Baseline / context / exact agreement / freshness]
+    OCR --> POLICY[Baseline / exact token / freshness]
     ARM[Explicit arm or disarm] --> POLICY
     POLICY --> CLIP[Clipboard interface]
     CLIP --> MEM[Memory clipboard: tests and replay]
@@ -122,56 +98,48 @@ also stops capture. Successful polls with no update or identical ROI pixels keep
 alive without publishing an OCR observation. Live baseline readiness may use a valid
 recognized frame followed by at least the configured baseline interval of healthy,
 unchanged capture polls. Any newer pending changed frame must be processed first.
-Idle stability never supplies an armed code-confirmation observation.
-Disarmed baseline OCR starts only on frames inside the configured frame-age budget.
-Completed baseline reads can add suppression while capture remains healthy. Moving
-baseline readiness accepts results up to 2500 ms old by default and still requires
-two matching recognized code sets spanning the baseline interval. Over-budget reads
-can suppress observed codes but cannot establish readiness. Healthy unchanged capture
-retains its baseline revalidation path. Armed recognition and clipboard writes keep
-their original frame deadlines. Unsampled or unrecognized codes cannot be suppressed.
+Idle stability never supplies an armed observation. Moving baseline readiness uses
+two recognized frames spanning at least 500 ms. Accepted code sets can differ.
+Reads over 2500 ms can add suppression while capture remains healthy, and can
+establish readiness only if healthy polls show the same image is still current.
+Live sessions ignore pending frames acquired before arm. Armed result freshness is
+checked before inference, after inference and at the locked clipboard handoff.
 Camera initialization has a separate bounded 10-second allowance and is reported separately.
 Window identity/occlusion and fast content changes are not fully detected; see manual matrix.
 
 ## Decisions and temporal semantics
 
-Candidate extraction uses whole OCR lines, not substring guesses: exact format, score >=
-0.96, promotional context score >=0.75, horizontal alignment within two code heights,
-and context no more than ten code heights below. It recognizes `N% off`, `promo`, or
-`use code`, without requiring the reference product name. No O/0, I/1, B/8 repairs.
-These conservative rules can miss real codes and can still accept a plausible wrong OCR
-string. Confidence is a model score, not a guarantee. Two correlated errors may agree.
+On large baseline CPU inputs, OCR runs text detection across the entire current ROI.
+It can reuse a previous recognition batch only when every crop's shape, pixels and
+batch grouping match exactly and the batch contained no code-shaped text in either
+profile. Code-shaped reads always run on the current frame. Reuse is bounded and the
+original frame timestamp still governs freshness. See [armed ROI validation](ARMED_ROI_VALIDATION.md).
 
-The Discount profile also accepts the exact `CODE: <token>` line format with a nearby,
-left-aligned `LIMITED TIME OFFER` heading above it. The heading gap is at most twice
-the code-line height and horizontal offset at most one line height. The token retains
-the existing code alphabet, confidence, source-pitch and O/0 guards. Baseline learning
-uses the extracted token for suppression. The label does not alter confirmation or
-freshness requirements.
+Both profiles accept a whole token or one attached to an anchored label such as
+`Code:`, `Coupon code:`, or `Use code`. Tokens contain both an ASCII letter and a
+digit and span 6–24 characters. Game also allows internal hyphens. An attached label
+can support a code by itself. Separate trusted headings or offers can support a
+nearby code above, below, or beside them. A standalone token needs at least eight
+characters, at least two digits, and a digit between letters. An ordinary handle
+or identifier that happens to match a code format can still be accepted.
 
-Current source-quality guard: code-like lines with detector top-edge pitch <10 original
-pixels/character carry `insufficient_source_resolution` and cannot become candidates.
-This is an explicit conservative restriction motivated by the challenge O/0 failure,
-not a validated universal threshold or an OCR correction. It sacrifices tiny-code recall.
-Upsampling does not increase source pitch. Raw text/confidence remain available.
-Exact-recall regression tests for all three challenge cases are strict expected failures;
-separate regression tests require no wrong accepted transcription. Held-out G3 evidence
-is required before lowering this guard or claiming supported tiny-chart performance.
+The code OCR floor is 0.96, and separate supporting text must score at least 0.75.
+The detector's top-edge pitch floor remains 10 original pixels per character and
+applies to both profiles. Upsampling cannot increase source pitch. OCR quality
+rejections veto eligibility. Tiny compressed inputs still fail the three strict
+expected-failure recall tests. The OCR score provides no calibrated estimate of
+exactness. Case and recognized characters are preserved throughout.
 
-Baseline suppression is monotonic within a session. A code already displayed when armed
-is intentionally ineligible. A single baseline image is the offline minimum; live collection
-requires recognized baseline text plus stable code observations or healthy unchanged
-pixels over >=500 ms, then displays readiness. Disarmed
-observations continue adding persistent codes to suppression. Baseline OCR
-misses can defeat suppression, so live validation must include them. Same exact code at
-multiple positions is one candidate. Two different eligible codes cause abstention.
+Baseline suppression is exact and monotonic within a session. Code-shaped text
+seen while disarmed remains ineligible even if the surrounding context changes.
+Unobserved or misread baseline text can escape suppression. Identical tokens at
+several positions count once. Several different eligible new tokens cause abstention.
 
-Production defaults allow 1000 ms frame age and agreement gap as conservative development
-limits, not latency success. Phase 2 must set a measured live age budget <=100 ms before
-claiming the latency gate. Offline replay explicitly uses 10000 ms limits so inference
-speed does not obscure its accuracy test; it reports this setting. No replay timing is
-reported as screen-capture latency. One image cannot meet default two-frame confirmation;
-an explicit `--confirmations 1` is available only for manual image/clipboard diagnostics.
+The live default frame-age budget is 3000 ms, measured from capture acquisition
+start through the clipboard handoff. A stop, disarm, capture failure or expired
+deadline inhibits a pending result. Native success requires exact Unicode clipboard
+readback, then disarms and records the string for deduplication. A clipboard failure
+also disarms. The offline replay budget remains 10000 ms for accuracy testing.
 
 ## Timing definitions and instrumentation
 
@@ -187,13 +155,12 @@ first OCR detection time. Physical video presentation latency is a separate metr
 | Capture/transfer | PC frame availability to owned ROI pixels | 8 ms |
 | Handoff + crop/preprocess | Capture timestamp to inference-ready image | 4 ms |
 | First OCR | Detection, perspective crop and recognition | 32 ms |
-| Confirmation | Wait for and recognize next distinct frame | 40 ms |
-| Decision | Pattern/context/baseline/agreement checks | 1 ms |
-| Clipboard | Open/empty/set/close successful transaction | 5 ms |
+| Decision | Format, evidence, freshness and dedup checks | 1 ms |
+| Clipboard | Open, write, verify Unicode readback, and close | 5 ms |
 | Reserve | Scheduling and jitter | 10 ms |
 
-Budgets are engineering hypotheses totaling 100 ms, not measurements. First startup/model
-warmup is measured separately and excluded only after the ready indicator. Phase-1 reports
+Stage budgets are historical engineering hypotheses with the former 40 ms second-frame
+wait removed. Startup and model warmup are measured separately. Phase-1 reports
 capture-call duration, crop, preprocessing, OCR, detection/recognition substage times when
 available, policy, clipboard, process, handoff age and per-frame result time. Live reports
 include p50/p95/max and sample counts, bounded to the last 10000 samples per metric. Generic
@@ -214,9 +181,9 @@ Explicit local paths and dictionary preflight prevent fallback downloads. Networ
 integration tests exercise initialization, warmup and recognition.
 
 Use only `opencv-python-headless`: RapidOCR depends on it, and installing another OpenCV
-wheel beside it creates a shared `cv2` conflict. PySide6 owns future UI display.
+wheel beside it creates a shared `cv2` conflict. PySide6 owns UI display.
 Core/dev/Windows direct dependencies are exact-pinned; `requirements-lock.txt` freezes the
-tested Windows transitive resolution. Optional GUI is pinned but deferred and not installed.
+tested Windows transitive resolution. The optional GUI dependency is pinned.
 Setup may access PyPI; recognition takes local files/arrays only.
 
 CPU is validated first. Adapter flags `--provider cpu|cuda|directml`, `--threads`, `--scale`
@@ -233,11 +200,11 @@ fail instead of silently benchmarking CPU fallback. Compare accuracy as well as 
 | Perspective and slope | OCR loss | Detector quadrilateral crop; test +/-6 degrees and beyond |
 | Moving candles overlap text | False movement localization | Do not treat all pixel change as new text; use text/content tracking later |
 | Banner/chat accidentally in ROI | Wrong copy | User ROI preview; baseline and context; full-scene distractor tests |
-| Baseline OCR misses permanent code | New-code false positive | Multi-frame stable baseline and negative soak before live release |
+| Baseline OCR misses permanent code | New-code false positive | Sample while disarmed, suppress observed tokens, and run negative soaks |
 | Code present before arming | Miss by design | Explicit readiness/status, user knows baseline behavior |
-| Two frames share OCR mistake | Wrong exact code | No confidence-only accuracy claim; held-out precision gate |
+| OCR misreads a glyph at high confidence | Wrong exact code | Preserve the reading, report errors and measure against exact held-out labels |
 | Current v6 small CPU cost | >100 ms latency | Measure; smaller detector/recognizer, recognition crops, providers next |
-| Video frame reused as confirmation | False certainty | DXcam video_mode=False; presentation timestamp dedupe |
+| Repeated capture of static pixels | Redundant OCR | Suppress identical ROI frames and confirm from the first eligible result |
 | Capture access loss / minimized / protected video | Black/stale frame | Disarm, show unavailable, no DRM workaround |
 | DPI/multi-monitor/rotation/HDR | Wrong ROI/colors | Physical-pixel ROI, DPI awareness and live matrix testing |
 | Clipboard locked or later changed by another app | Failed/lost copy | Immediate failure/disarm; manual verification; no overwrite retry loop |
@@ -257,7 +224,7 @@ network attempt, incorrect copy or unreported skipped integration check. This is
 gate only. Challenge failures are recorded, not mislabeled as passed accuracy.
 
 **G2 — Real Windows path (implemented; full qualification pending).** Require DXcam region capture into latest-frame handoff,
-owned BGR copies and timestamps, explicit arm/disarm/stop, stable baseline readiness,
+owned BGR copies and timestamps, explicit arm/disarm/stop, disarmed baseline readiness,
 source-loss disarming, and structured latency tracing. On target PC, a local test video
 rendering generated scenes must feed *real captured frames* into this exact pipeline and
 the real clipboard. Pass iff 30 randomly positioned/code-varied events produce exact
@@ -275,7 +242,7 @@ qualification, a clear warning about this risk, and explicit user opt-in.
 Monitor loss, invalid capture, DXcam access loss, capture errors, and capture-poll watchdog
 expiry must stop the session and disarm. Restart requires a fresh baseline and explicit
 rearm. Healthy idle polls preserve session state, and identical pixels supply no new
-confirmation evidence. Confirmation, freshness, duplicate suppression, and all other
+observations. Freshness, duplicate suppression, and all other
 G2 checks remain mandatory. The historical moving-occlusion failure remains in the
 manual ledger under its original criterion.
 

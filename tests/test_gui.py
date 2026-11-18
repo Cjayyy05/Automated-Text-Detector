@@ -334,7 +334,7 @@ def test_ocr_details_show_raw_read_and_decision_without_changing_state(window):
 
     policy = DecisionPolicy()
     frame = {
-        "status": "confirming",
+        "status": "disarmed",
         "code": None,
         "candidates": ["Q8M4Z7P2VK"],
         "lines": [
@@ -343,18 +343,51 @@ def test_ocr_details_show_raw_read_and_decision_without_changing_state(window):
                 "confidence": 0.98,
                 "rejection": None,
                 "box": {"left": 0, "top": 0, "right": 300, "bottom": 24},
-            }
+            },
+            {
+                "text": "100% off",
+                "confidence": 0.98,
+                "rejection": None,
+                "box": {"left": 0, "top": 30, "right": 175, "bottom": 54},
+            },
         ],
     }
     detail = gui.describe_ocr(frame, policy)
     window.handle_event({"event": "ocr_detail", "text": detail})
     assert "CODE: Q8M4Z7P2VK" in window.ocr_detail.toPlainText()
-    assert "another changed frame" in detail
+    assert "eligible candidate with code label" in detail
     assert not window.armed
     policy.suppressed.add("Q8M4Z7P2VK")
     assert "suppressed by baseline" in gui.describe_ocr(frame, policy)
     frame["lines"][0]["rejection"] = "insufficient_source_resolution"
     assert "insufficient_source_resolution" in gui.describe_ocr(frame, policy)
+
+
+def test_ocr_details_separate_stale_from_missing_token_or_label():
+    from dataclasses import asdict
+
+    from stream_code_capture.domain import Rect, TextLine
+    from stream_code_capture.policy import DecisionPolicy
+
+    label = TextLine("Code", 0.987, Rect(8, 60, 85, 85))
+    token = TextLine("AK74ZM53Q8", 0.993, Rect(97, 60, 267, 85))
+    heading = TextLine("LIMITED TIME OFFER", 0.99, Rect(7, 20, 270, 45))
+    noise = [TextLine("market price", 0.99, Rect(500, 100, 600, 120))] * 20
+    frame = {
+        "status": "stale",
+        "code": None,
+        "lines": [asdict(line) for line in [*noise, label, token, heading]],
+    }
+    detail = gui.describe_ocr(frame, DecisionPolicy())
+    assert "Expired frame" in detail
+    assert "LIMITED TIME OFFER" in detail and "limited context" in detail
+    assert "eligible candidate with nearby context" in detail
+    assert "Code [0.987]" in detail
+
+    frame["lines"] = [asdict(label), asdict(heading)]
+    assert "Code [0.987] (8,60)–(85,85) · unsupported exact code format" in gui.describe_ocr(
+        frame, DecisionPolicy()
+    )
 
 
 def test_scope_is_checked_before_guarded_clipboard_and_stops_on_failure():

@@ -26,9 +26,7 @@ def main():
     roi = Rect(*(args.roi or manifest["roi"]))
     runs = []
     for scale in args.scales:
-        recognizer = RapidRecognizer(
-            scale=scale, min_code_pitch=0 if args.raw else 10, ambiguity_guard=not args.raw
-        )
+        recognizer = RapidRecognizer(scale=scale, min_code_pitch=0 if args.raw else 10)
         recognizer.warmup()
         metrics = Metrics()
         cases = []

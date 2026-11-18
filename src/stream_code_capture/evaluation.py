@@ -61,9 +61,7 @@ def evaluate(path: Path, recognizer: Recognizer, *, profile: str = "discount") -
     cpu_start, wall_start = process_time_ns(), perf_counter_ns()
     for event_id, frames in grouped.items():
         memory = MemoryClipboard()
-        policy = DecisionPolicy(
-            PolicyConfig(max_frame_age_ms=10000, confirmation_window_ms=10000, profile=profile)
-        )
+        policy = DecisionPolicy(PolicyConfig(max_frame_age_ms=10000, profile=profile))
         pipeline = Pipeline(recognizer, memory, Rect(*frames[0]["label"]["roi"]), policy)
         replay = frames[0]["label"]["state"] == "baseline"
         truth = next((f["label"]["code"] for f in frames if f["label"]["state"] == "visible"), None)
@@ -85,7 +83,7 @@ def evaluate(path: Path, recognizer: Recognizer, *, profile: str = "discount") -
                 pipeline.baseline(frame)
                 policy.arm()
                 continue
-            # Snapshot datasets stay disarmed: no invented duplicate confirmation.
+            # Snapshots have no disarmed baseline and stay disarmed.
             result = pipeline.process(frame)
             metrics.add(result.timings_ms)
             if label["state"] == "visible":

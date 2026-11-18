@@ -1,31 +1,38 @@
 # Instant Stream Code Capture
 
-Python 3.12 / Windows 11 foundation for recognizing a transient promotional code
+Python 3.12 / Windows 11 application for recognizing a transient promotional code
 **inside video pixels**, within a user-selected chart region, then copying it for
 manual redemption. No DOM scraping, cloud OCR, redemption or mouse automation.
 
-## v0.1.0 baseline status
+## v0.2.0
 
-This initial Git baseline includes the offline image/replay tools, live DXcam console,
-Discount and Game profiles, and PySide6 GUI with ROI selection, explicit arm/disarm,
-status and stop controls. Optional native copying requires per-session consent;
-verified-copy sound and a remembered local WAV selection are available. Auto-arm is
-not implemented: startup is disarmed and every successful copy requires explicit rearm.
+Discount and Game use the same single-observation policy. A static reveal can copy on its
+first eligible OCR read. The detector preserves case and accepts O and 0 as read. The
+live frame-age limit is 3 seconds. Both profiles use baseline suppression, one copy
+per explicit arm, and exact native clipboard readback. The Windows GUI provides ROI
+selection, decision diagnostics, and optional custom WAV notifications. The
+[Livestream Code Simulator](#livestream-code-simulator) provides timed, formatted
+text reveals for testing.
 
-G2 is signed off only for supervised personal use on center primary output 0,
+The operator reported a **PASS** for native Windows clipboard copying on the build
+prepared as v0.2.0. The existing personal-use native GUI scope is center primary output 0,
 1920 × 1080, 100% scale, SDR, local Windows console and fixed display topology.
-The signed-off ledger includes 30 manual native paste matches and subsequent GUI
-Discount/Game paste smoke checks. Full G3 representative accuracy/recall and latency
-qualification remains unmet; full G4 UX/display/release qualification remains incomplete.
-O/0 and insufficient-source-resolution inputs abstain, the three strict challenge
-xfails remain, and <100 ms performance is not achieved. Detailed ROI/resize/reload,
-broader display/source transitions and audible/custom-sound manual checks remain pending;
-physical hotplug is deferred under the approved G2 evidence substitution.
+[Operator result](docs/WINDOWS_VALIDATION.md#v020-operator-clipboard-test)
 
-See [current GUI qualification](docs/PHASE6_VALIDATION.md),
-[the G2 sign-off ledger](docs/PHASE52_MANUAL_RESULTS.md), and
-[baseline validation](docs/BASELINE_VALIDATION.md). Older phase records below retain
-their historical pending statuses; they do not revoke the later limited-scope sign-off.
+In paired replay, exact copies increased from 52 to 78 across 111 positive cases.
+The revised policy also copied 15 wrong transcriptions and wrote in 3 of 37 negative
+cases. O/0 errors and tiny or compressed text remain limitations. The three strict
+challenge xfails, representative livestream accuracy, broader display qualification,
+and the sub-100 ms latency goal remain open.
+[Detection policy validation](docs/DETECTION_POLICY_VALIDATION.md)
+
+## v0.1.0 baseline
+
+The baseline introduced offline image and replay tools, live DXcam capture, Discount
+and Game profiles, and the PySide6 GUI. The earlier Windows sign-off included 30 manual
+native paste matches and later Discount and Game GUI paste smoke checks.
+[Baseline validation](docs/BASELINE_VALIDATION.md) · [G2 sign-off ledger](docs/PHASE52_MANUAL_RESULTS.md) ·
+[Phase 6 GUI validation](docs/PHASE6_VALIDATION.md)
 
 The offline and **live DXcam console pipelines** use real local RapidOCR models. Phase 5's
 native screen-test matrix made 160 correct copies with matching clipboard readbacks and
@@ -35,9 +42,6 @@ not production readiness. Tiny compressed O/0 recognition
 remains unresolved, and measured live event latency is well above 100 ms. See
 [Phase 2 measurements](docs/PHASE2_VALIDATION.md), [Phase 1 validation](docs/PHASE1_VALIDATION.md)
 and the [foundation record](docs/VALIDATION.md).
-Phase 6 adds a local PySide6 GUI that starts in dry-run mode. Limited personal-use G2
-sign-off is recorded. Optional native copying requires per-session consent and the
-approved center-monitor configuration; GUI paste validation is tracked separately.
 
 ## Launch the Windows dry-run prototype
 
@@ -74,15 +78,15 @@ Phase 4 measured a faster **opt-in configuration of the same baseline model**:
 `--scale 1 --threads 4 --cpu-arena --no-spinning --det-limit 640`. On a comparable eight-slide
 DXcam/memory repeat, p50/p95 copy latency fell from 1072/1874 ms to 492/520 ms with 8/8 exact
 copies in both. A second seed also passed 8/8, improving p50 from 877 to 485 ms. Defaults and
-confirmation/safety rules remain unchanged. This is fixture
-evidence, not representative accuracy or <100 ms qualification. See
+confirmation rules describe that experiment. The fixture results leave representative
+accuracy and <100 ms qualification open. See
 [Phase 4 measurements and short-exposure tests](docs/PHASE4_VALIDATION.md).
 
 [Phase 5 native qualification](docs/PHASE5_VALIDATION.md) records the explicit Windows
 comparison, failure probes and negative monitoring. The native harness requires
 `--native-clipboard`; omitting it keeps writes in memory. The application now rechecks
 the accepted frame's freshness immediately before the clipboard handoff, including after
-waiting for the control/write lock. This does not change the 1000 ms age limit.
+waiting for the control/write lock. Those Phase 5 runs used a 1000 ms age limit.
 On matched native runs, discount p50 improved from 583 to 270 ms, game from 520 to 249 ms,
 and the eight imported screenshots from 947 to 488 ms, with unchanged exact recall.
 The optimized CPU arena also increased memory allocations; defaults remain unchanged.
@@ -117,15 +121,35 @@ fresh in-flight results after disappearance; it does not extend runtime freshnes
 cached frames. O/0 cases intentionally remain in the recall denominator and can make a run
 exit nonzero. The original imported-image playback command remains available below.
 
+## Livestream Code Simulator
+
+From the repository root, with the PySide6 GUI dependency installed, run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/livestream_code_simulator.py
+```
+
+Enter any multiline text in the single editor and choose its font, size, style, colors,
+and alignment. Formatting applies to the whole draft. Press **Start** to hide the draft
+for the selected countdown (five seconds by default). The same window displays the
+formatted text when the countdown ends. **Reset** or **Esc** returns to the draft.
+Press **Reset** in input mode to clear the draft and restore the defaults.
+
+Run the detector separately and point its ROI at the simulator's display area. Start
+the countdown before collecting the detector's baseline so the draft is hidden. The
+simulator appends UTC and monotonic timestamps to
+`artifacts/livestream-simulator-reveals.jsonl` without saving the text. The timestamps
+mark the Qt display transition. One fresh frame can trigger confirmation.
+
 ## Detection profiles
 
-`--profile discount` is the default and retains the original temporary chart-discount
-rules. `--profile game` accepts exact uppercase ASCII codes of 8–20 characters including
-optional internal hyphens, with both a letter and digit, and requires nearby redemption/
-expiry context. It does not depend on a chart background. Select an ROI containing the
-code **and** its label (e.g. `Expiry Date`, `有効期限`, `有效期至`). The game profile keeps
-the O/0 abstention, quality floor, two fresh confirmations, baseline, one-shot arm and dedup.
-Lowercase, arbitrary formats, and ambiguous glyph correction are not supported.
+`--profile discount` is the default. Both profiles accept 6–24 ASCII characters with
+at least one letter and digit. Game also accepts internal hyphens. An explicit code
+label or nearby offer can support short codes and codes with the letters and digits
+in separate blocks. A standalone token needs at least eight characters, two digits,
+and a digit between letters. This filters common username shapes, at the cost of some
+bare codes. OCR confidence and source-size floors apply to each candidate. Game also
+recognizes nearby redemption or expiry text. [Earlier Discount layout results](docs/DISCOUNT_LAYOUT_VALIDATION.md)
 
 ```powershell
 ./.venv/Scripts/python.exe -m stream_code_capture live --profile game --roi 300 250 1060 390 --dry-run
@@ -158,11 +182,10 @@ livestream recordings are still missing, so **real-video qualification is blocke
 No new OCR strategy is promoted. See [Phase 3 results](docs/PHASE3_VALIDATION.md)
 for synthetic comparisons, unchanged challenge failures and exact check commands.
 
-**Current safety limitation:** code-like OCR strings containing `O` or `0` now explicitly
-abstain (`unresolved_O0_glyph`), even at high confidence and larger source sizes. New tests
-found systematic errors in both directions that survived two-frame agreement. This prevents
-known wrong writes but also rejects valid codes. It does not fix recognition or establish
-production accuracy; the original three challenge expected failures remain.
+OCR can still misread characters at high scores, including O and 0, or treat a
+code-shaped ID as a redemption code. Two different eligible strings in the same
+observation cause the detector to wait. The three strict tiny-text challenge xfails
+remain. [Detection policy validation](docs/DETECTION_POLICY_VALIDATION.md)
 
 ## Experimental fast CPU path
 
@@ -189,9 +212,10 @@ It remains opt-in, with no broadcast qualification. `--preprocessing none|gray|c
 `--det-limit`, `--cpu-arena` and `--no-spinning` support controlled experiments. No GPU result
 is claimed. `v4` is a benchmark alternative, not the recommended fast path.
 
-`--activity-gate-ms 100` is an opt-in scheduling experiment. Bright neutral text changes and
-pending confirmations scan immediately; other frames receive a forced scan at least every
-100 ms while the consumer is available. Continuous candle motion cannot reset this deadline.
+`--activity-gate-ms 100` is an opt-in scheduling experiment. Bright neutral text changes
+trigger an immediate scan. The newest deferred frame receives a scan after 100 ms when
+the consumer is available, even if it stays static. Continuous candle motion cannot reset
+this deadline.
 Colored/dim text can wait for that scan; keep the gate disabled when optimizing first-copy
 latency. OCR is single-thread-owned and the capture handoff still holds only the newest frame.
 
@@ -233,10 +257,9 @@ shows lifecycle events, status, copy results, and errors. Use `--report` to save
 frame diagnostics and the final timing summary in JSONL.
 
 1. `start` begins capture and disarmed baseline collection.
-2. Wait for `ready` after at least 500 ms of baseline stability. A healthy unchanged
-   region can establish readiness from its recognized initial image.
-   Moving regions use matching recognized code sets, with a bounded baseline-only
-   allowance for slow OCR. The GUI shows accepted/rejected reads and the last OCR time.
+2. Wait for `ready` after at least 500 ms of disarmed baseline collection. A healthy static
+   region can use its initial recognized image. Moving regions need two current reads
+   across the interval, and the code sets may differ. The GUI shows baseline progress.
 3. `arm` enables one new-code decision. Dry-run emits `would_copy` and uses memory only.
 4. `disarm` inhibits writes, including results from OCR already in flight.
 5. `status` reports current state. `stop` or Ctrl+C stops capture and exits.
@@ -255,8 +278,12 @@ restart with new coordinates if the video moves. Window occlusion/minimization c
 reliably identified from arbitrary desktop pixels yet.
 Camera initialization has a separate 10-second allowance, before the running-source timeout.
 
-The development freshness budget remains 1000 ms (`--max-frame-age-ms`); it is not the
-100 ms performance target. Small ROIs help. No failed clipboard write is retried automatically.
+The default freshness budget is 3000 ms (`--max-frame-age-ms`). Small ROIs
+help. Large regions keep full-frame text detection and may reuse pixel-identical
+recognition batches containing only unrelated text. Dense, changing text can still
+exceed the deadline. See [armed ROI measurements](docs/ARMED_ROI_VALIDATION.md).
+Native success requires an exact Unicode readback. Write or readback failure disarms
+and requires an explicit rearm.
 
 ## Generate and replay a chart sequence
 
@@ -276,7 +303,7 @@ without it the replay stays disarmed. The manifest's expected strings are used o
 score outcomes, never as OCR inputs. JSON includes recognized boxes/text, decisions,
 expected/actual writes and timing percentiles. Exit 0 = expected writes matched, 1 = mismatch,
 2 = configuration/input error. Replay uses an explicitly reported 10-second offline age
-budget; `--age-budget-ms 1000` exercises the normal development freshness limit.
+budget; `--age-budget-ms 3000` uses the live default age budget.
 
 ```powershell
 ./.venv/Scripts/python.exe -m stream_code_capture generate samples/harder --seed 19 --count 3 --challenge
@@ -297,20 +324,14 @@ this example belong only to the generated fixture. For your own PC image, choose
 area in source-image pixels: left, top, exclusive right, exclusive bottom. Exclude the
 permanent banner and chat. The detector finds text within that crop automatically.
 
-Default policy requires uppercase ASCII alphanumerics, 8–16 characters, both letters and
-digits, score >=0.96, nearby discount/promo context and two consecutive exact observations.
-The OCR adapter also rejects code lines below 10 **source-image pixels per character**
-(detector top-edge length / character count), reporting `insufficient_source_resolution`.
-This conservative quality floor prevents the known challenge wrong-copy case; it does not
-solve tiny-text recognition or prove that larger text is correct. Rejected text is retained
-unchanged in diagnostics. Challenge exact-recall tests remain strict expected failures.
-It does not correct OCR spelling or ambiguous characters. A baseline is required before
-arming. A successful copy disarms; copied codes stay suppressed for the session.
+The source quality floor is 10 original image pixels per character, measured along
+the detector box's top edge. Each candidate must also score at least 0.96.
+Diagnostics preserve OCR text, including rejected readings. The detector never repairs
+or normalizes the extracted text.
 
-Real image-to-Windows-clipboard diagnostics require `--clipboard windows --arm`, a separate
-baseline and explicit one-frame confirmation override. Follow
-[Windows validation](docs/WINDOWS_VALIDATION.md); this changes your clipboard. A single
-image with the default two confirmations will only report `confirming`.
+An intentional image-to-Windows-clipboard test needs `--clipboard windows --arm` and a
+separate baseline image. The command can write on the first eligible observation.
+[Windows validation](docs/WINDOWS_VALIDATION.md#available-now-file-pixels-to-real-clipboard)
 
 ## Benchmarks and layout
 

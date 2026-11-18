@@ -98,7 +98,9 @@ def probe(recognizer, width, height, rows, seconds):
     exit_code = session.run(duration=seconds)
     ready = next((event for event in events if event["event"] == "ready"), None)
     copied = next((event for event in events if event.get("status") == "would_copy"), None)
-    recognized = next((event for event in events if event.get("status") == "confirming"), None)
+    recognized = next(
+        (event for event in events if event.get("status") in {"confirming", "would_copy"}), None
+    )
     return {
         "roi": [width, height],
         "distractor_text_lines": rows * 4,

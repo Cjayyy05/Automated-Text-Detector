@@ -7,7 +7,7 @@ from stream_code_capture.clipboard import MemoryClipboard
 from stream_code_capture.domain import Frame, Rect, TextLine
 from stream_code_capture.latest import LatestFrame
 from stream_code_capture.pipeline import Pipeline
-from stream_code_capture.policy import DecisionPolicy, PolicyConfig
+from stream_code_capture.policy import DecisionPolicy
 
 
 class StubRecognizer:
@@ -26,7 +26,7 @@ class StubRecognizer:
 def test_roi_is_cropped_before_recognition_and_mock_clipboard_is_one_shot():
     recognizer, clipboard = StubRecognizer(), MemoryClipboard()
     pixels = np.arange(120 * 200 * 3, dtype=np.uint8).reshape(120, 200, 3)
-    policy = DecisionPolicy(PolicyConfig(confirmations=2))
+    policy = DecisionPolicy()
     pipeline = Pipeline(recognizer, clipboard, Rect(20, 30, 180, 110), policy, lambda: 100)
     pipeline.baseline(Frame(pixels, 0, 0))
     policy.arm()
@@ -34,8 +34,8 @@ def test_roi_is_cropped_before_recognition_and_mock_clipboard_is_one_shot():
         TextLine("AB23CD45EF", 0.99, Rect(5, 5, 140, 20)),
         TextLine("100% off", 0.99, Rect(5, 40, 140, 60)),
     ]
-    assert pipeline.process(Frame(pixels, 1, 10)).status == "confirming"
-    assert pipeline.process(Frame(pixels, 2, 20)).status == "copied"
+    assert pipeline.process(Frame(pixels, 1, 10)).status == "copied"
+    assert pipeline.process(Frame(pixels, 2, 20)).status == "disarmed"
     assert pipeline.process(Frame(pixels, 3, 30)).status == "disarmed"
     assert clipboard.writes == ["AB23CD45EF"]
     assert np.array_equal(recognizer.inputs[0], pixels[30:110, 20:180])
@@ -51,15 +51,15 @@ def test_clipboard_failure_does_not_commit_or_retry_unarmed():
             raise OSError("clipboard busy")
 
     recognizer, clipboard = StubRecognizer(), BusyClipboard()
-    policy = DecisionPolicy(PolicyConfig(confirmations=1))
+    policy = DecisionPolicy()
     policy.learn_baseline([])
     policy.arm()
     recognizer.lines = [
-        TextLine("AB23CD45EF", 0.99, Rect(5, 5, 80, 15)),
+        TextLine("AB23CD45EF", 0.99, Rect(5, 5, 105, 15)),
         TextLine("100% off", 0.99, Rect(5, 25, 80, 35)),
     ]
-    pipeline = Pipeline(recognizer, clipboard, Rect(0, 0, 100, 100), policy, lambda: 100)
-    pixels = np.zeros((100, 100, 3), np.uint8)
+    pipeline = Pipeline(recognizer, clipboard, Rect(0, 0, 120, 100), policy, lambda: 100)
+    pixels = np.zeros((100, 120, 3), np.uint8)
     result = pipeline.process(Frame(pixels, 1, 1))
     assert result.status == "clipboard_failed"
     assert result.error == "clipboard busy"

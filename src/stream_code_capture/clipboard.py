@@ -26,5 +26,7 @@ class WindowsClipboard:
         try:
             win32clipboard.EmptyClipboard()
             win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+            if win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT) != text:
+                raise RuntimeError("Clipboard readback did not match the recognized code")
         finally:
             win32clipboard.CloseClipboard()

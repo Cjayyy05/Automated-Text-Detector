@@ -10,6 +10,10 @@ No dependency upgrades, application GUI, packaging, commit or push. Benchmark mo
 are explicitly provisioned locally; inference remains offline. See the historical
 [Phase 1 record](PHASE1_VALIDATION.md) for the prior measurements and unfinished G2 matrix.
 
+The measurements and commands below describe the Phase 2 source revision. Develop now
+uses a single observation and accepts O/0. For current reproduction and observed
+incorrect copies, see [detection policy validation](DETECTION_POLICY_VALIDATION.md).
+
 ## Decision
 
 **The Phase 2 acceptance gate fails.** Faster local inference is demonstrated, but the

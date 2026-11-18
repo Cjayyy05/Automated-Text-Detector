@@ -16,7 +16,7 @@ from .clipboard import MemoryClipboard, WindowsClipboard
 from .domain import Frame, Image, Rect
 from .ocr import RapidRecognizer
 from .pipeline import Pipeline
-from .policy import DecisionPolicy, PolicyConfig
+from .policy import DEFAULT_FRAME_AGE_MS, DecisionPolicy, PolicyConfig
 from .synthetic import generate
 
 
@@ -88,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
     image.add_argument("--roi", type=int, nargs=4, required=True, metavar=("L", "T", "R", "B"))
     image.add_argument("--baseline", type=Path)
     image.add_argument("--clipboard", choices=["memory", "windows"], default="memory")
-    image.add_argument("--confirmations", type=int, default=2)
+    image.add_argument("--confirmations", type=int, choices=[1], help=argparse.SUPPRESS)
     replay = sub.add_parser(
         "replay", help="Replay generated pixels; compare memory writes to truth"
     )
@@ -97,7 +97,7 @@ def parser() -> argparse.ArgumentParser:
         "--age-budget-ms",
         type=float,
         default=10000,
-        help="Offline replay only: freshness and confirmation budget",
+        help="Offline replay only: freshness budget",
     )
     live = sub.add_parser(
         "live", help="Live Windows chart capture; disarmed and dry-run by default"
@@ -113,7 +113,7 @@ def parser() -> argparse.ArgumentParser:
         "--start", action="store_true", help="Start capture after warmup; still disarmed"
     )
     live.add_argument("--duration", type=float, help="Stop after this many seconds")
-    live.add_argument("--max-frame-age-ms", type=float, default=1000)
+    live.add_argument("--max-frame-age-ms", type=float, default=DEFAULT_FRAME_AGE_MS)
     live.add_argument("--report", type=Path, help="New JSONL file; refuses overwrite")
     live.add_argument(
         "--activity-gate-ms",
@@ -211,7 +211,6 @@ def replay(args: argparse.Namespace, recognizer: RapidRecognizer) -> int:
                 min_confidence=args.confidence,
                 profile=args.profile,
                 max_frame_age_ms=args.age_budget_ms,
-                confirmation_window_ms=args.age_budget_ms,
             )
         )
         pipeline = Pipeline(recognizer, clipboard, roi, policy)
@@ -281,7 +280,6 @@ def main(argv: list[str] | None = None) -> int:
         policy = DecisionPolicy(
             PolicyConfig(
                 min_confidence=args.confidence,
-                confirmations=args.confirmations,
                 profile=args.profile,
             )
         )

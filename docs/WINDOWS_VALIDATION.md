@@ -1,6 +1,6 @@
 # Windows manual validation
 
-Current v0.1.0 status: G2 has operator sign-off for the limited center-primary-display
+The v0.1.0 baseline earned G2 sign-off for the limited center-primary-display
 personal-use scope, including 30 manual paste matches. Subsequent Discount/Game GUI
 paste smoke checks are recorded in [Phase 6](PHASE6_VALIDATION.md). G3 and full G4 remain
 incomplete. Earlier pending entries below are historical procedures/checkpoints; use the
@@ -9,6 +9,50 @@ to distinguish completed, deferred and still-unqualified checks.
 
 These procedures distinguish **file input**, **real clipboard**, and **real capture**.
 Unit tests and replay never alter the Windows clipboard and need no display.
+
+## v0.2.0 operator clipboard test
+
+**PASS (operator-reported), recorded 2026-11-18 MYT.** The operator manually tested
+the current detector with native Windows clipboard copying, reported that it worked
+correctly, and approved the current detection behavior for v0.2.0. The profile,
+input, display, copy count and latency are unrecorded. Broader G2, G3 accuracy and
+latency, and full G4 qualification remain open.
+[Detection policy validation](DETECTION_POLICY_VALIDATION.md)
+
+## Verify v0.2.0 on Windows
+
+1. On the supported primary display, open two PowerShell windows at the repository
+   root. Launch the simulator in one and the detector in the other.
+
+   ```powershell
+   ./.venv/Scripts/python.exe scripts/livestream_code_simulator.py
+   ./.venv/Scripts/python.exe -m stream_code_capture.gui
+   ```
+
+2. In the simulator, type a throwaway mixed-case token of eight or more characters
+   with letters interleaved with two or more digits. Include both uppercase O and zero.
+   Use a readable font at 34 pt and a countdown long enough to select the region and arm,
+   such as 20 seconds. Optionally put `Use code:` before the token on the same line.
+3. Press **Start** on the simulator to hide the draft. In the detector, select Discount,
+   load the preview, choose the simulator's text area, and click **Start**. Wait for
+   **Ready**, then click **Arm** before the countdown ends. Leave the screen still.
+   The new result should appear once and the detector should disarm. Compare every
+   character, including case, O and zero. Dry-run uses the memory clipboard.
+4. Rearm while the same code is visible. Reveal that same token again and verify that
+   it cannot copy twice. With a fresh detector session, show a token during baseline
+   collection, then arm and reveal it again. It should be suppressed. Then try a new
+   token, a plain sentence, a price, a timestamp, and a username with a leading `@`.
+   Repeat in Game with a new code containing an internal hyphen.
+5. To test native delivery, stop the dry run. In a new detector session, enable
+   **Use Windows clipboard for this session** and accept the warning. Repeat the static
+   reveal. Paste into a text editor and compare every character. Select a custom WAV
+   if you also want to verify the copy notification. A success should disarm and
+   keep the same token suppressed after rearm.
+6. Try a larger region with motion. Record misses, wrong strings and unexpected writes.
+   Disarm or Stop while OCR is in flight and check that no write starts after the
+   control is accepted. Logs distinguish frame age from the simulator's display
+   transition. For the measured replay and captured tests, see
+   [detection policy validation](DETECTION_POLICY_VALIDATION.md).
 
 **Start here for Phase 5.2:** follow the [numbered manual checklist](PHASE52_MANUAL_CHECKLIST.md)
 and copy the [blank results template](PHASE52_MANUAL_RESULTS.md). It targets the read-only
@@ -140,8 +184,9 @@ containing the code and its nearby expiry/redemption label; do not assume fixtur
 
 Replace these example screen coordinates. Enter `start`, wait for `ready`, then `arm`.
 Rearm explicitly after a successful copy; use `disarm` before moving the video and `stop`
-to finish. Game uses the baseline OCR model and retains O/0 abstention. Lowercase and formats
-outside 8–20 uppercase ASCII alphanumeric characters with optional internal hyphens abstain.
+to finish. Game uses the baseline OCR model. The v0.2.0 policy accepts 6–24 ASCII
+characters with letters and digits, including optional internal hyphens. Mixed case
+and O/0 are preserved.
 Native testing still requires explicitly replacing `--dry-run` with `--clipboard windows`,
 then manually pasting/comparing results locally. Complete the G2 matrix below before GUI
 development; no automatic redemption or submission is part of any test.
@@ -181,7 +226,7 @@ paste into Notepad and compare every character. Never auto-redeem. Success disar
 remembers the code for this process; rearming must not recopy it. Stop starts a new session
 only by launching the command again. A new process has a new in-memory deduplication set.
 
-The default age limit is 1000 ms. If baseline frames are stale, narrow the chart ROI and
+The v0.2.0 default age limit is 3000 ms. If baseline frames are stale, narrow the chart ROI and
 inspect timings. Do not silently enlarge it to pass a performance gate. A 100 ms limit
 currently prevents useful operation; the under-100 ms target is not achieved.
 DXcam initialization is allowed up to 10 seconds. The capture-poll watchdog starts afterward.
@@ -215,12 +260,12 @@ recognition or policy. The final `test_result.passed` must be true and process e
 3. Run the disarmed image command first. It must show `disarmed`; clipboard stays unchanged.
 4. The following explicitly armed diagnostic uses a tighter chart ROI that includes the
    generated first code and context, but no banner/chat. These are **fixture coordinates**,
-   not runtime defaults. It intentionally uses one-frame confirmation to test an image:
+   not runtime defaults. The policy can confirm from this single image:
 
 ```powershell
 ./.venv/Scripts/python.exe -m stream_code_capture generate samples/manual --seed 7 --count 3
 ./.venv/Scripts/python.exe -m stream_code_capture image samples/manual/case_000_1.png --roi 70 170 420 300
-./.venv/Scripts/python.exe -m stream_code_capture image samples/manual/case_000_1.png --roi 70 170 420 300 --baseline samples/manual/case_000_0.png --arm --confirmations 1 --clipboard windows
+./.venv/Scripts/python.exe -m stream_code_capture image samples/manual/case_000_1.png --roi 70 170 420 300 --baseline samples/manual/case_000_0.png --arm --clipboard windows
 ```
 
 5. Require `status: copied` and manually paste into Notepad. Compare every character to
@@ -235,8 +280,8 @@ recognition or policy. The final `test_result.passed` must be true and process e
 
 This procedure is **not automatically run** by repository checks. Native clipboard behavior
 and contention have automated Phase 5/5.1 evidence; the required manual paste comparisons
-remain unperformed. The single-frame file diagnostic cannot replace the two-observation
-real-capture G2 checks in the Phase 5.2 checklist.
+remain unperformed. The image diagnostic covers file input. Use the real-capture checks above
+to verify the live path.
 
 ## G2: remaining qualification matrix
 
@@ -296,7 +341,7 @@ Concrete remaining checks:
 - GUI native clipboard mode requires full G2 qualification, a clear warning that eligible
   codes from covering windows can be copied, and explicit user opt-in.
 - Repeated code: show the same code again after a successful copy and rearm. Expected:
-  no repeated write. A different eligible code still needs new exact observations.
+  no repeated write. A different eligible code needs a fresh observation.
 - Shutdown: Ctrl+C during OCR and when the video is static; expected prompt return after
   in-flight OCR exits, no later write, and capture cleanup. Native inference is not forcibly
   interrupted. The producer join is bounded to three seconds and reports a cleanup failure.
@@ -306,10 +351,12 @@ attempt DRM bypass. A phone screenshot does not validate Windows screen capture.
 
 ## Phase 2 comparison and manual release gates
 
+The Phase 2 settings and observations below describe that earlier revision.
+
 Read [PHASE2_VALIDATION.md](PHASE2_VALIDATION.md) before interpreting experimental profile
 results. The target is first **captured code-containing frame** to successful native write,
-not OCR time or the first frame the recognizer happened to accept. O/0 strings currently
-abstain, even if their confidence is high; this is an intentional safety limitation.
+not OCR time or the first frame the recognizer happened to accept. O/0 strings in those runs
+abstained, even if their confidence is high; this is an intentional safety limitation.
 
 The final `--fallback-baseline` mode also verifies eligible fast candidates against a wider
 crop using the warmed baseline recognizer. Disagreements abstain, with both raw strings and

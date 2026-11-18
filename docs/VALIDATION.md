@@ -1,6 +1,10 @@
 # Validation record — 2026-10-29
 
-For the current v0.1.0 Git baseline checks and qualification summary, see
+See [v0.2.0 detection policy validation](DETECTION_POLICY_VALIDATION.md) for the
+2026-11-18 before/after accuracy and latency evidence and the operator-reported
+native clipboard pass.
+
+For the v0.1.0 Git baseline checks and qualification summary, see
 [BASELINE_VALIDATION.md](BASELINE_VALIDATION.md). This file preserves the foundation
 results; its pending statuses describe that earlier checkpoint.
 

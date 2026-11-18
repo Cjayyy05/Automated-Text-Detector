@@ -49,27 +49,26 @@ def test_cli_game_profile_reuses_live_and_refuses_discount_specific_cascade():
 @pytest.mark.parametrize(
     "code",
     [
-        "AB00-CD45EF",
-        "AB2O-CD45EF",
         "AB--23CD45",
-        "abcdefgh12",
         "123456789",
         "ABCDEFGHIJK",
         "-AB23CD45EF",
         "AB23CD45EF-",
     ],
 )
-def test_game_rejects_ambiguous_or_unsupported_strings(code):
+def test_game_rejects_unsupported_strings(code):
     assert candidates(lines(code), PolicyConfig(profile="game")) == []
 
 
-def test_game_requires_nearby_reliable_context_and_quality():
+def test_game_uses_context_for_simple_tokens_and_requires_quality():
     config = PolicyConfig(profile="game")
-    assert candidates(lines(context="Chat username"), config) == []
+    simple = lines("spring2026", context="Chat username")[0]
+    assert candidates([simple, lines(context="Chat username")[1]], config) == []
     assert (
-        candidates([lines()[0], TextLine("Expiry Date:", 0.99, Rect(0, 300, 100, 320))], config)
-        == []
+        candidates([simple, TextLine("Expiry Date:", 0.99, Rect(0, 300, 100, 320))], config) == []
     )
+    assert candidates([simple, lines()[1]], config) == ["spring2026"]
+    assert candidates(lines("aB0O-cD45ef")[:1], config) == ["aB0O-cD45ef"]
     assert (
         candidates([TextLine("AB23-CD45EF", 0.99, Rect(200, 10, 240, 40)), lines()[1]], config)
         == []
@@ -86,14 +85,13 @@ def test_game_requires_nearby_reliable_context_and_quality():
     )
 
 
-def test_game_baseline_confirmations_dedup_and_rearm():
+def test_game_baseline_dedup_and_rearm():
     policy = DecisionPolicy(PolicyConfig(profile="game"))
     policy.learn_baseline(lines())
     policy.arm()
     assert policy.observe(lines(), 1, 1, 2)[0] == "no_candidate"
     new = lines("ZX67-GH89JK")
-    assert policy.observe(new, 2, 2, 3)[0] == "confirming"
-    assert policy.observe(new, 3, 3, 4) == ("ready", "ZX67-GH89JK")
+    assert policy.observe(new, 2, 2, 3) == ("ready", "ZX67-GH89JK")
     policy.committed("ZX67-GH89JK")
     policy.arm()
     assert policy.observe(new, 4, 4, 5)[0] == "no_candidate"
@@ -142,9 +140,7 @@ def test_real_ocr_hyphenated_game_code_to_memory():
     recognizer = RapidRecognizer()
     recognizer.warmup()
     memory = MemoryClipboard()
-    policy = DecisionPolicy(
-        PolicyConfig(profile="game", max_frame_age_ms=10000, confirmation_window_ms=10000)
-    )
+    policy = DecisionPolicy(PolicyConfig(profile="game", max_frame_age_ms=10000))
     pipeline = Pipeline(recognizer, memory, Rect(0, 0, 600, 150), policy)
     pipeline.baseline(Frame(pixels.copy(), 0, perf_counter_ns()))
     policy.arm()

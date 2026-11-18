@@ -1,4 +1,4 @@
-"""Full two-observation policy evaluation; exclusively uses a memory clipboard."""
+"""Full policy evaluation; exclusively uses a memory clipboard."""
 
 import argparse
 import json
@@ -18,9 +18,7 @@ from stream_code_capture.policy import DecisionPolicy, PolicyConfig
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=Path)
-    parser.add_argument(
-        "--profile", choices=["phase1-policy", "baseline", "tiny", "cascade"], required=True
-    )
+    parser.add_argument("--profile", choices=["baseline", "tiny", "cascade"], required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--no-spinning", action="store_true")
     args = parser.parse_args()
@@ -36,7 +34,6 @@ def main():
         if args.profile in {"tiny", "cascade"}
         else {}
     )
-    config["ambiguity_guard"] = args.profile != "phase1-policy"
     config["allow_spinning"] = not args.no_spinning
     recognizer = RapidRecognizer(**config)
     recognizer.warmup()
@@ -45,9 +42,7 @@ def main():
     with args.report.open("x", encoding="utf-8") as report:
         for case in data["cases"]:
             clipboard = MemoryClipboard()
-            policy = DecisionPolicy(
-                PolicyConfig(max_frame_age_ms=10000, confirmation_window_ms=10000)
-            )
+            policy = DecisionPolicy(PolicyConfig(max_frame_age_ms=10000))
             pipeline = Pipeline(recognizer, clipboard, Rect(*data["roi"]), policy)
             outcomes = []
             for index, item in enumerate(case["frames"]):

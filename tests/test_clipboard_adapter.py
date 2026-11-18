@@ -16,12 +16,18 @@ def test_unicode_clipboard_transaction_closes_on_success_and_failure(monkeypatch
         OpenClipboard=lambda: calls.append("open"),
         EmptyClipboard=lambda: calls.append("empty"),
         SetClipboardText=set_text,
+        GetClipboardData=lambda kind: calls.append(("read", kind)) or "AB23CD45EF",
         CloseClipboard=lambda: calls.append("close"),
     )
     monkeypatch.setitem(sys.modules, "win32clipboard", api)
     monkeypatch.setitem(sys.modules, "win32con", SimpleNamespace(CF_UNICODETEXT=13))
     adapter = object.__new__(WindowsClipboard)  # No OS calls, portable adapter contract test.
     adapter.write("AB23CD45EF")
+    assert calls == ["open", "empty", ("AB23CD45EF", 13), ("read", 13), "close"]
+    calls.clear()
+    api.GetClipboardData = lambda kind: "ab23cd45ef"
+    with pytest.raises(RuntimeError, match="readback"):
+        adapter.write("AB23CD45EF")
     assert calls == ["open", "empty", ("AB23CD45EF", 13), "close"]
     calls.clear()
 

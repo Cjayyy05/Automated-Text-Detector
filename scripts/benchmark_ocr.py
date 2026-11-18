@@ -33,11 +33,6 @@ def main():
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--full-roi", action="store_true")
     parser.add_argument("--positives-only", action="store_true")
-    parser.add_argument(
-        "--allow-ambiguous",
-        action="store_true",
-        help="Diagnostic only: compare pre-Phase-2 O/0 policy; no clipboard",
-    )
     args = parser.parse_args()
     inputs = []
     for path in args.manifests:
@@ -68,7 +63,6 @@ def main():
                                 "preprocessing": preprocessing,
                                 "cpu_arena": args.arena,
                             }
-                            config["ambiguity_guard"] = not args.allow_ambiguous
                             config["fallback_baseline"] = args.fallback_baseline
                             config["allow_spinning"] = not args.no_spinning
                             recognizer = RapidRecognizer(**config)

@@ -1,6 +1,6 @@
 """Small, pixel-based interfaces; coordinates are relative to the source image."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -47,9 +47,30 @@ class Frame:
 
 
 @dataclass(frozen=True)
+class RecognitionBatchTiming:
+    crops: int
+    input_width: int
+    inference_ms: float
+
+
+@dataclass
+class RecognitionProfile:
+    detected_lines: int = 0
+    cache_state: str = "inactive"
+    crop_bytes: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    grouping_misses: int = 0
+    matched_crops_in_misses: int = 0
+    code_batches_excluded: int = 0
+    batches: list[RecognitionBatchTiming] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Recognition:
     lines: list[TextLine]
     timings_ms: dict[str, float]
+    profile: RecognitionProfile | None = None
 
 
 @runtime_checkable

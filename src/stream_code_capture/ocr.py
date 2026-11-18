@@ -1,23 +1,108 @@
 """Pinned RapidOCR adapter: local models, one warmed engine, ROI text localization."""
 
 import math
+from collections.abc import Callable
 from dataclasses import replace
 from importlib.util import find_spec
 from pathlib import Path
-from time import perf_counter_ns, process_time_ns
+from time import perf_counter, perf_counter_ns, process_time_ns
 from typing import Any
 
 import cv2
 import numpy as np
 
-from .domain import Image, Recognition, Rect, TextLine
-from .policy import PolicyConfig, candidates, code_text, discount_code
+from .domain import Image, Recognition, RecognitionBatchTiming, RecognitionProfile, Rect, TextLine
+from .policy import MIN_CODE_PITCH, PolicyConfig, candidates, code_text, extract_code
 
 PROVIDERS = {
     "cpu": "CPUExecutionProvider",
     "cuda": "CUDAExecutionProvider",
     "directml": "DmlExecutionProvider",
 }
+LARGE_ROI_PIXELS = 750_000
+RECOGNITION_REUSE_BYTES = 8 * 1024 * 1024
+
+BatchKey = tuple[tuple[tuple[int, ...], bytes], ...]
+BatchReadings = tuple[tuple[str, float], ...]
+
+
+class RecognitionBatchReuse:
+    """Reuse only exact, complete RapidOCR batches without code-shaped readings."""
+
+    def __init__(self, recognize: Callable[[list[Image]], Any], batch_size: int) -> None:
+        from rapidocr.ch_ppocr_rec import TextRecOutput
+
+        self.recognize = recognize
+        self.output: Any = TextRecOutput
+        self.batch_size = batch_size
+        self.enabled = False
+        self.previous: dict[BatchKey, BatchReadings] = {}
+        self.profile: RecognitionProfile | None = None
+
+    def __call__(self, images: list[Image]) -> Any:
+        if not self.enabled:
+            self.previous.clear()
+            return self.recognize(images)
+        crop_bytes = sum(image.nbytes for image in images)
+        profile = self.profile
+        if profile is not None:
+            profile.crop_bytes = crop_bytes
+            profile.cache_state = "active"
+        if crop_bytes > RECOGNITION_REUSE_BYTES:
+            if profile is not None:
+                profile.cache_state = "over byte budget"
+            self.previous.clear()
+            return self.recognize(images)
+
+        started = perf_counter()
+        # Match the pinned recognizer's aspect sort and padding groups. Keeping the
+        # complete group in the key preserves the model input width of every crop.
+        order = np.argsort([image.shape[1] / float(image.shape[0]) for image in images]).tolist()
+        groups = [order[i : i + self.batch_size] for i in range(0, len(order), self.batch_size)]
+        keys = [tuple((images[i].shape, images[i].tobytes()) for i in group) for group in groups]
+        cached = [self.previous.get(key) for key in keys]
+        if profile is not None:
+            previous_crops = {crop for group in self.previous for crop in group}
+            for key, hit in zip(keys, cached, strict=True):
+                if hit is not None:
+                    profile.cache_hits += 1
+                    continue
+                matched = sum(crop in previous_crops for crop in key)
+                profile.cache_misses += 1
+                profile.matched_crops_in_misses += matched
+                profile.grouping_misses += int(matched == len(key))
+        current: dict[BatchKey, BatchReadings] = {}
+        if all(readings is None for readings in cached):
+            result = self.recognize(images)
+            for group, key in zip(groups, keys, strict=True):
+                rows_read = tuple((result.txts[i], result.scores[i]) for i in group)
+                if self.can_reuse(rows_read):
+                    current[key] = rows_read
+        else:
+            rows = [("", 0.0)] * len(images)
+            for group, key, readings in zip(groups, keys, cached, strict=True):
+                if readings is None:
+                    batch = self.recognize([images[i] for i in group])
+                    readings = tuple(zip(batch.txts, batch.scores, strict=True))
+                if self.can_reuse(readings):
+                    current[key] = readings
+                for i, row in zip(group, readings, strict=True):
+                    rows[i] = row
+            texts, scores = zip(*rows, strict=True)
+            result = self.output(
+                imgs=images, txts=texts, scores=list(scores), word_results=(None,) * len(images)
+            )
+        self.previous = current
+        if profile is not None:
+            profile.code_batches_excluded = len(groups) - sum(key in current for key in keys)
+        result.elapse = perf_counter() - started
+        return result
+
+    @staticmethod
+    def can_reuse(readings: BatchReadings) -> bool:
+        # Even a rejected or context-free token must get fresh recognition. A code
+        # can qualify on a later frame after its surrounding text changes.
+        return not any(extract_code(text, "game") for text, _ in readings)
 
 
 class RapidRecognizer:
@@ -27,16 +112,16 @@ class RapidRecognizer:
         scale: float = 2,
         provider: str = "cpu",
         threads: int = 2,
-        min_code_pitch: float = 10,
+        min_code_pitch: float = MIN_CODE_PITCH,
         model_profile: str = "baseline",
         model_dir: Path | None = None,
         det_limit: int = 960,
         preprocessing: str = "none",
         cpu_arena: bool = False,
         profile_inference: bool = False,
-        ambiguity_guard: bool = True,
         fallback_baseline: bool = False,
         allow_spinning: bool = True,
+        reuse_static_batches: bool = True,
     ) -> None:
         import onnxruntime as ort
         from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
@@ -48,7 +133,6 @@ class RapidRecognizer:
         if not math.isfinite(min_code_pitch) or min_code_pitch < 0:
             raise ValueError("min_code_pitch must be finite and nonnegative")
         self.min_code_pitch = min_code_pitch
-        self.ambiguity_guard = ambiguity_guard
         if model_profile not in {"baseline", "tiny", "v4"}:
             raise ValueError("Unknown local model profile")
         if fallback_baseline and model_profile != "tiny":
@@ -60,9 +144,14 @@ class RapidRecognizer:
         self.preprocessing = preprocessing
         self.profile_inference = profile_inference
         self._inference_ms: dict[str, float] = {}
+        self._profile: RecognitionProfile | None = None
         self._meter_installed = False
         self._resize_buffer: Image | None = None
         self.model_profile = model_profile
+        self._reuse_static_batches = (
+            reuse_static_batches and provider == "cpu" and model_profile == "baseline"
+        )
+        self._batch_reuse: RecognitionBatchReuse | None = None
         self._clahe = cv2.createCLAHE(clipLimit=2, tileGridSize=(8, 8))
         if provider not in PROVIDERS:
             raise ValueError("Unknown provider")
@@ -156,9 +245,9 @@ class RapidRecognizer:
             RapidRecognizer(
                 provider=provider,
                 min_code_pitch=min_code_pitch,
-                ambiguity_guard=ambiguity_guard,
                 profile_inference=profile_inference,
                 allow_spinning=allow_spinning,
+                reuse_static_batches=False,
             )
             if fallback_baseline
             else None
@@ -189,14 +278,34 @@ class RapidRecognizer:
                 ) -> Any:
                     started = perf_counter_ns()
                     result = _original(*args, **kwargs)
+                    elapsed = (perf_counter_ns() - started) / 1e6
                     key = f"{_name}_inference"
-                    self._inference_ms[key] = (
-                        self._inference_ms.get(key, 0) + (perf_counter_ns() - started) / 1e6
-                    )
+                    self._inference_ms[key] = self._inference_ms.get(key, 0) + elapsed
+                    if _name == "text_rec" and self._profile is not None:
+                        feed = args[1] if len(args) > 1 else kwargs["input_feed"]
+                        shape = next(iter(feed.values())).shape
+                        self._profile.batches.append(
+                            RecognitionBatchTiming(shape[0], shape[-1], elapsed)
+                        )
                     return result
 
                 session.run = measured
+        install_crop_meter = self.profile_inference and not self._meter_installed
         self._meter_installed = True
+        if self._reuse_static_batches and self._batch_reuse is None:
+            self._batch_reuse = RecognitionBatchReuse(
+                self._engine.recognize_txt, self._engine.text_rec.rec_batch_num
+            )
+            self._engine.recognize_txt = self._batch_reuse
+        if install_crop_meter:
+            recognize = self._engine.recognize_txt
+
+            def measure_crops(images: list[Image]) -> Any:
+                if self._profile is not None:
+                    self._profile.detected_lines = len(images)
+                return recognize(images)
+
+            self._engine.recognize_txt = measure_crops
         if self._fallback is not None:
             self._fallback.warmup()
         self.warmed = True
@@ -227,6 +336,8 @@ class RapidRecognizer:
                         verification_text=text,
                         verification_confidence=confidence,
                     )
+                elif code_text(line) and line.rejection is None:
+                    line = replace(line, rejection="unverified_fast_candidate")
                 verified_lines.append(line)
             elapsed = (perf_counter_ns() - verification_start) / 1e6
             timings = dict(result.timings_ms)
@@ -235,9 +346,19 @@ class RapidRecognizer:
             timings["ocr_process_cpu"] += (process_time_ns() - cpu) / 1e6
             for key, value in self._fallback._inference_ms.items():
                 timings[key] = timings.get(key, 0) + value
-            return Recognition(verified_lines, timings)
-        if not needs_fallback(result.lines):
-            return result
+            return Recognition(verified_lines, timings, result.profile)
+        if eligible or not needs_fallback(result.lines):
+            # Baseline/duplicate filtering happens downstream, so it could turn
+            # several fast candidates into one. Only verified fast lines may copy.
+            return replace(
+                result,
+                lines=[
+                    replace(line, rejection="unverified_fast_candidate")
+                    if code_text(line) and line.rejection is None
+                    else line
+                    for line in result.lines
+                ],
+            )
         fallback_started = perf_counter_ns()
         fallback = self._fallback.recognize_timed(image)
         completed = perf_counter_ns()
@@ -278,8 +399,12 @@ class RapidRecognizer:
         start = perf_counter_ns()
         cpu_start = process_time_ns()
         self._inference_ms.clear()
+        self._profile = RecognitionProfile() if self.profile_inference else None
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8 or image.size == 0:
             raise ValueError("Expected a nonempty uint8 BGR image")
+        if self._batch_reuse is not None:
+            self._batch_reuse.enabled = image.shape[0] * image.shape[1] >= LARGE_ROI_PIXELS
+            self._batch_reuse.profile = self._profile
         if self.preprocessing != "none":
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             if self.preprocessing == "clahe":
@@ -301,7 +426,14 @@ class RapidRecognizer:
                 dtype=np.uint8,
             )
         prepared = perf_counter_ns()
-        result = self._engine(enlarged)
+        profile = self._profile
+        try:
+            result = self._engine(enlarged)
+        finally:
+            # Rec-only verification must not append to a prior frame's profile.
+            self._profile = None
+            if self._batch_reuse is not None:
+                self._batch_reuse.profile = None
         recognized = perf_counter_ns()
         timings = {
             "preprocess": (prepared - start) / 1e6,
@@ -317,7 +449,7 @@ class RapidRecognizer:
             if seconds is not None:
                 timings[name] = float(seconds) * 1000
         if result.boxes is None or result.txts is None or result.scores is None:
-            return Recognition([], timings)
+            return Recognition([], timings, profile)
         lines = []
         for box, text, confidence in zip(result.boxes, result.txts, result.scores, strict=True):
             points = np.asarray(box, dtype=np.float64) / self.scale
@@ -326,24 +458,13 @@ class RapidRecognizer:
             # Upsampling cannot restore lost source pixels. This is a conservative
             # quality floor, not evidence that larger text is necessarily correct.
             text = str(text)
-            token = discount_code(text)
+            token = extract_code(text, "game")
             pitch = float(np.linalg.norm(points[1] - points[0])) / max(1, len(text.strip()))
             rejection = (
                 "insufficient_source_resolution"
                 if token is not None and pitch < self.min_code_pitch
                 else None
             )
-            # The varied corpus shows high-confidence errors in BOTH directions,
-            # including at adequate resolution. Until independent glyph evidence
-            # is qualified, do not guess whether either shape means O or zero.
-            # This intentionally abstains on some correct strings too.
-            if (
-                rejection is None
-                and self.ambiguity_guard
-                and token is not None
-                and any(character in token for character in "O0")
-            ):
-                rejection = "unresolved_O0_glyph"
             lines.append(
                 TextLine(
                     text,
@@ -352,12 +473,12 @@ class RapidRecognizer:
                     rejection,
                 )
             )
-        return Recognition(lines, timings)
+        return Recognition(lines, timings, profile)
 
 
 def needs_fallback(lines: list[TextLine]) -> bool:
     return (
         bool(lines)
         and not candidates(lines, PolicyConfig())
-        and not any(code_text(line) and line.rejection for line in lines)
+        and not any(code_text(line, "game") and line.rejection for line in lines)
     )

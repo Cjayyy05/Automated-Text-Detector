@@ -16,7 +16,7 @@ from .clipboard import MemoryClipboard, WindowsClipboard
 from .domain import Clipboard, Frame, Recognizer, Rect
 from .metrics import Metrics
 from .pipeline import Pipeline
-from .policy import DecisionPolicy, PolicyConfig, code_text
+from .policy import DEFAULT_FRAME_AGE_MS, DecisionPolicy, PolicyConfig
 
 MOVING_BASELINE_MAX_AGE_MS = 2500
 
@@ -28,7 +28,7 @@ class LiveConfig:
     output: int = 0
     fps: int = 60
     dry_run: bool = True
-    max_frame_age_ms: float = 1000
+    max_frame_age_ms: float = DEFAULT_FRAME_AGE_MS
     source_timeout_ms: float = 2500
     baseline_ms: float = 500
     activity_gate_ms: float = 0
@@ -109,6 +109,7 @@ class LiveSession:
         self.metrics = Metrics()
         self.activity = ActivityGate(config.activity_gate_ms) if config.activity_gate_ms else None
         self.activity_skipped = 0
+        self.deferred_frame: Frame | None = None
         self.policy = DecisionPolicy(
             PolicyConfig(max_frame_age_ms=config.max_frame_age_ms, profile=config.profile)
         )
@@ -125,7 +126,6 @@ class LiveSession:
         self.started_ns = 0
         self.deadline_ns: int | None = None
         self.baseline_start_ns = 0
-        self.baseline_key: frozenset[str] | None = None
         self.baseline_count = 0
         self.baseline_sequence = 0
         self.baseline_accepted = 0
@@ -134,6 +134,7 @@ class LiveSession:
         self.next_baseline_diagnostic_ns = 0
         self.baseline_reason = "Waiting for the first usable capture frame"
         self.active_generation = 0
+        self.armed_since_ns = 0
         self.failure: str | None = None
 
     def healthy(self) -> bool:
@@ -182,11 +183,13 @@ class LiveSession:
                         self.emit({"event": "arm_rejected", "reason": "not ready/healthy"})
                         continue
                     self.policy.arm()
+                    self.armed_since_ns = perf_counter_ns()
                     self.active_generation = self.controls.generation
                     self.controls.inhibit.clear()
                 self.emit({"event": "armed", "dry_run": self.config.dry_run})
             elif command == "disarm":
                 self.policy.disarm()
+                self.deferred_frame = None
                 self.emit({"event": "disarmed"})
             elif command == "status":
                 self.emit(
@@ -200,9 +203,9 @@ class LiveSession:
                 )
 
     def consume(self, frame: Frame) -> None:
+        self.deferred_frame = None
         now = perf_counter_ns()
         if not 0 <= (now - frame.captured_ns) / 1e6 <= self.config.max_frame_age_ms:
-            self.policy.reset_pending()
             self.emit({"event": "stale_before_ocr", "sequence": frame.sequence})
             if not self.ready:
                 self.baseline_rejected += 1
@@ -212,6 +215,9 @@ class LiveSession:
         if float(np.std(frame.image[::8, ::8])) < 1:
             raise RuntimeError("Blank capture; source must be visible and unprotected")
         self.metrics.add({"input_validation": (perf_counter_ns() - now) / 1e6})
+        # An already queued image cannot confirm a code revealed after arming.
+        if self.policy.armed and frame.captured_ns < self.armed_since_ns:
+            return
         if not self.ready:
             baseline_ocr_started = perf_counter_ns()
             self.baseline_diagnostic("Recognizing baseline pixels", force=True)
@@ -231,28 +237,29 @@ class LiveSession:
                 and self.worker.last_capture_poll_ns >= frame.captured_ns
                 and 0
                 <= (now - self.worker.last_capture_poll_ns) / 1e6
-                <= self.config.max_frame_age_ms
+                <= self.config.source_timeout_ms
             )
-            baseline_max_age = max(self.config.max_frame_age_ms, MOVING_BASELINE_MAX_AGE_MS)
-            if age > baseline_max_age and not unchanged_current:
+            if age > MOVING_BASELINE_MAX_AGE_MS and not unchanged_current:
                 self.baseline_start_ns, self.baseline_count = 0, 0
                 self.baseline_rejected += 1
-                self.emit({"event": "baseline_stale", "age_ms": age, "limit_ms": baseline_max_age})
+                self.emit(
+                    {
+                        "event": "baseline_stale",
+                        "age_ms": age,
+                        "limit_ms": MOVING_BASELINE_MAX_AGE_MS,
+                    }
+                )
                 self.baseline_diagnostic(
                     "Baseline read exceeded its time budget. Try a smaller region.",
                     force=True,
                 )
                 return
-            key = frozenset(
-                text for line in lines if (text := code_text(line, self.config.profile))
-            )
-            if key != self.baseline_key or not self.baseline_start_ns:
-                self.baseline_start_ns, self.baseline_count = frame.captured_ns, 0
-                self.baseline_key = key
+            if not self.baseline_count:
+                self.baseline_start_ns = frame.captured_ns
             self.baseline_count += 1
             self.baseline_accepted += 1
             self.baseline_sequence = frame.sequence
-            self.baseline_reason = "Baseline recognized. Waiting for stable code observations."
+            self.baseline_reason = "Baseline recognized. Waiting for the baseline interval."
             elapsed = (frame.captured_ns - self.baseline_start_ns) / 1e6
             if elapsed >= self.config.baseline_ms and self.baseline_count >= 2:
                 self.baseline_diagnostic(force=True)
@@ -265,14 +272,13 @@ class LiveSession:
                     }
                 )
             return
-        if self.activity is not None:
+        if self.activity is not None and self.policy.armed:
             started = perf_counter_ns()
-            scan = self.activity.should_scan(
-                frame.image, started, confirming=self.policy.first_observed_ns is not None
-            )
+            scan = self.activity.should_scan(frame.image, started)
             self.metrics.add({"activity_gate": (perf_counter_ns() - started) / 1e6})
             if not scan:
                 self.activity_skipped += 1
+                self.deferred_frame = frame
                 return
         result = self.pipeline.process(frame)
         if result.status == "disarmed":
@@ -352,6 +358,18 @@ class LiveSession:
                 frame = self.worker.latest.wait()
                 self.metrics.add({"frame_wait": (perf_counter_ns() - waiting) / 1e6})
                 if frame is None:
+                    # Scan a one-time static change when the activity deadline arrives.
+                    deferred = self.deferred_frame
+                    if (
+                        deferred is not None
+                        and self.activity is not None
+                        and self.activity.last_scan_ns is not None
+                        and self.worker.captured == deferred.sequence
+                        and perf_counter_ns() - self.activity.last_scan_ns
+                        >= self.activity.interval_ns
+                    ):
+                        self.consume(deferred)
+                        continue
                     self.ready_from_idle_baseline()
                     self.baseline_diagnostic()
                     continue

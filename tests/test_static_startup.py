@@ -1,4 +1,4 @@
-"""Baseline stability may use idle time. Code confirmation still needs changed frames."""
+"""Baseline stability may use idle time. One new reveal frame can confirm a code."""
 
 from threading import Event, Thread
 from time import monotonic, sleep
@@ -12,7 +12,7 @@ from stream_code_capture.live import Controls, LiveConfig, LiveSession
 
 
 @pytest.mark.parametrize("style", ["idle", "identical", "moving_to_static"])
-def test_static_baseline_suppresses_existing_code_and_confirms_only_new_frames(style):
+def test_static_baseline_suppresses_existing_code_and_copies_first_reveal(style):
     state = [0]
     closed = Event()
     events = []
@@ -74,13 +74,9 @@ def test_static_baseline_suppresses_existing_code_and_confirms_only_new_frames(s
         wait_for(lambda: 1 in calls)
         assert session.clipboard.writes == []
         state[0] = 2
-        wait_for(lambda: any(e.get("status") == "confirming" for e in events))
-        count = len(calls)
-        sleep(0.15)
-        assert len(calls) == count
-        assert session.clipboard.writes == []
-        state[0] = 3
         wait_for(lambda: session.clipboard.writes == ["ZX78UV23KL"])
+        sleep(0.15)
+        assert calls.count(2) == 1
         assert not session.policy.armed
     finally:
         controls.send("stop")
@@ -146,7 +142,7 @@ def test_slow_baseline_is_bounded_when_pixels_change(
 
 
 @pytest.mark.parametrize("width,height,baseline_ocr_ms", [(760, 140, 80), (1920, 1000, 1800)])
-def test_moving_baseline_learns_visible_codes_but_armed_deadline_stays_strict(
+def test_moving_baseline_learns_changing_codes_and_armed_deadline_is_bounded(
     monkeypatch, width, height, baseline_ocr_ms
 ):
     from stream_code_capture import live
@@ -199,21 +195,17 @@ def test_moving_baseline_learns_visible_codes_but_armed_deadline_stays_strict(
         session.consume(Frame(pixels, session.worker.captured, clock[0]))
 
     observe([existing])
+    assert not session.ready
     observe([existing, during])
-    observe([existing])
-    assert not session.ready  # A changing code set restarted the stability interval.
-    observe([existing])
-    assert session.ready and session.baseline_accepted == 4
+    assert session.ready and session.baseline_accepted == 2
     assert session.policy.suppressed == {existing, during}
     controls.send("arm")
     session.handle_commands()
     observe([existing, during], 80)
     assert events[-1]["status"] == "no_candidate"
-    observe([new], 1300)
+    observe([new], 3100)
     assert events[-1]["status"] == "stale"
-    observe([new], 80)
-    assert events[-1]["status"] == "confirming" and session.clipboard.writes == []
-    observe([new], 80)
+    observe([new], 1300)
     assert session.clipboard.writes == [new] and not session.policy.armed
     controls.send("arm")
     session.handle_commands()

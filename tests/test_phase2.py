@@ -19,26 +19,21 @@ from stream_code_capture.policy import DecisionPolicy, PolicyConfig, candidates
 from stream_code_capture.synthetic import chart_frame, make_code
 
 
-def test_stale_frame_never_enters_expensive_ocr_and_clears_confirmation():
+def test_stale_frame_never_enters_expensive_ocr_even_when_armed():
     class NeverRun:
         def recognize(self, image):
             raise AssertionError("Stale pixels reached OCR")
 
-    policy = DecisionPolicy(PolicyConfig(confirmations=2, max_frame_age_ms=50))
+    policy = DecisionPolicy(PolicyConfig(max_frame_age_ms=50))
     policy.learn_baseline([])
     policy.arm()
-    lines = [
-        TextLine("AB23CD45EF", 0.99, Rect(0, 0, 150, 20)),
-        TextLine("100% off", 0.99, Rect(0, 30, 100, 50)),
-    ]
-    assert policy.observe(lines, 1, 1, 2)[0] == "confirming"
     clipboard = MemoryClipboard()
     pipeline = Pipeline(
         NeverRun(), clipboard, Rect(0, 0, 10, 10), policy, clock=lambda: 100_000_000
     )
     result = pipeline.process(Frame(np.zeros((10, 10, 3), np.uint8), 2, 3))
     assert result.status == "stale" and not clipboard.writes
-    assert policy.first_observed_ns is None and "ocr" not in result.timings_ms
+    assert policy.armed and "ocr" not in result.timings_ms
 
 
 def test_latest_wait_wakes_on_publication_without_queueing():
@@ -58,13 +53,12 @@ def test_activity_background_motion_and_colored_text_cannot_defer_deadline():
         assert gate.should_scan(pixels, index * 10_000_000) == (index in {0, 10})
 
 
-def test_activity_detects_small_new_neutral_text_and_does_not_delay_confirmation():
+def test_activity_detects_small_new_neutral_text():
     gate, pixels = ActivityGate(100), np.zeros((30, 40, 3), np.uint8)
     assert gate.should_scan(pixels, 0)
     assert not gate.should_scan(pixels, 1)
     pixels[5:10, 5:10] = 240
     assert gate.should_scan(pixels, 2)
-    assert gate.should_scan(pixels, 3, confirming=True)
 
 
 @pytest.mark.parametrize("value", [0, -1, 1001, float("inf"), float("nan")])
@@ -79,7 +73,7 @@ def test_fallback_never_overrides_quality_rejection_or_invents_confidence():
             raise AssertionError("Quality guard was bypassed")
 
     lines = [
-        TextLine("AB23CD450F", 0.999, Rect(0, 0, 150, 20), "unresolved_O0_glyph"),
+        TextLine("AB23CD450F", 0.999, Rect(0, 0, 90, 20), "insufficient_source_resolution"),
         TextLine("100% off", 0.99, Rect(0, 30, 100, 50)),
     ]
     recognizer = RapidRecognizer.__new__(RapidRecognizer)
@@ -88,6 +82,19 @@ def test_fallback_never_overrides_quality_rejection_or_invents_confidence():
     assert recognizer.recognize_timed(np.zeros((60, 150, 3), np.uint8)).lines == lines
     assert not needs_fallback([])
     assert needs_fallback([TextLine("100% off", 0.99, Rect(0, 30, 100, 50))])
+
+
+def test_ambiguous_fast_results_cannot_become_unverified_candidates():
+    lines = [
+        TextLine("AB23CD450F", 0.99, Rect(0, 0, 150, 20)),
+        TextLine("Ab52zX28GH", 0.99, Rect(0, 30, 150, 50)),
+    ]
+    recognizer = RapidRecognizer.__new__(RapidRecognizer)
+    recognizer._recognize_once = lambda image: Recognition(lines, {"ocr": 1})
+    recognizer._fallback = object()
+    result = recognizer.recognize_timed(np.zeros((60, 150, 3), np.uint8))
+    assert all(line.rejection == "unverified_fast_candidate" for line in result.lines)
+    assert not candidates(result.lines, PolicyConfig())
 
 
 def test_full_owned_roi_can_be_borrowed_without_copy():
@@ -144,7 +151,7 @@ def test_unverified_experimental_profiles_cannot_write_native_clipboard(profile)
 
 
 @pytest.mark.ocr
-def test_large_high_confidence_O0_regression_is_an_explicit_abstention():
+def test_large_high_confidence_O0_can_still_be_transcribed_incorrectly():
     # First new corpus event exposed a wrong O->0 copy even above the pitch floor.
     code = make_code(random.Random(20261030), challenge=True)
     image = chart_frame(code, tick=1, visible=True, seed=20261030, angle_limit=6)
@@ -154,8 +161,10 @@ def test_large_high_confidence_O0_regression_is_an_explicit_abstention():
     recognizer = RapidRecognizer()
     recognizer.warmup()
     lines = recognizer.recognize(pixels)
-    assert any(line.rejection == "unresolved_O0_glyph" for line in lines)
-    assert candidates(lines, PolicyConfig()) == []
+    accepted = candidates(lines, PolicyConfig())
+    assert accepted == [code.replace("O", "0", 1)]
+    assert accepted != [code]  # Preserve the known wrong-copy risk as an explicit regression.
+    assert any(line.text == accepted[0] and line.confidence >= 0.96 for line in lines)
 
 
 @pytest.mark.ocr

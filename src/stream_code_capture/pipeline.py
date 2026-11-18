@@ -5,8 +5,16 @@ from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import Protocol
 
-from .domain import Clipboard, Frame, Recognizer, Rect, TextLine, TimedRecognizer
-from .policy import DecisionPolicy, candidates
+from .domain import (
+    Clipboard,
+    Frame,
+    RecognitionProfile,
+    Recognizer,
+    Rect,
+    TextLine,
+    TimedRecognizer,
+)
+from .policy import DecisionPolicy
 
 
 class Clock(Protocol):
@@ -25,6 +33,7 @@ class Outcome:
     captured_ns: int = 0
     completed_ns: int = 0
     recognized_ns: int = 0
+    ocr_profile: RecognitionProfile | None = None
 
 
 class Pipeline:
@@ -71,10 +80,12 @@ class Pipeline:
             )
         cropped = self.roi.crop(frame.image, copy=self.copy_roi)
         prepared = self.clock()
+        ocr_profile = None
         try:
             if isinstance(self.recognizer, TimedRecognizer):
                 recognition = self.recognizer.recognize_timed(cropped)
                 lines, stages = recognition.lines, recognition.timings_ms
+                ocr_profile = recognition.profile
             else:
                 lines = self.recognizer.recognize(cropped)
                 stages = {"ocr": (self.clock() - prepared) / 1e6, "preprocess": 0.0}
@@ -86,8 +97,6 @@ class Pipeline:
             self.policy.disarm()
         controlled = self.clock()
         status, code = self.policy.observe(lines, frame.sequence, frame.captured_ns, controlled)
-        first_observed = self.policy.first_observed_ns
-        first_recognized = self.policy.first_recognized_ns
         decided = self.clock()
         error = None
         if code is not None:
@@ -96,7 +105,6 @@ class Pipeline:
             )
             try:
                 if self.clock() > self.copy_deadline_ns:
-                    self.policy.reset_pending()
                     status, code = "stale", None
                 else:
                     self.clipboard.write(code)
@@ -132,19 +140,19 @@ class Pipeline:
             "frame_to_result": (finished - frame.captured_ns) / 1e6,
             **stages,
         }
-        if status == "copied" and first_observed is not None:
-            timings["first_observed_to_clipboard"] = (finished - first_observed) / 1e6
-            if first_recognized is not None:
-                timings["first_recognition_to_confirmation"] = (decided - first_recognized) / 1e6
+        if status == "copied":
+            timings["first_observed_to_clipboard"] = (finished - frame.captured_ns) / 1e6
+            timings["first_recognition_to_confirmation"] = (decided - recognized) / 1e6
         return Outcome(
             frame.sequence,
             status,
             code,
-            candidates(lines, self.policy.config),
+            self.policy.last_candidates,
             lines,
             timings,
             error,
             frame.captured_ns,
             finished,
             recognized,
+            ocr_profile,
         )

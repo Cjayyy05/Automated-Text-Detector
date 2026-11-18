@@ -5,7 +5,7 @@ from stream_code_capture.clipboard import MemoryClipboard
 from stream_code_capture.domain import Frame, Rect, TextLine
 from stream_code_capture.live import Controls, LiveConfig, LiveSession
 from stream_code_capture.pipeline import Pipeline
-from stream_code_capture.policy import DecisionPolicy, PolicyConfig
+from stream_code_capture.policy import DecisionPolicy
 
 
 def test_control_delay_cannot_allow_an_expired_frame_to_write():
@@ -19,10 +19,10 @@ def test_control_delay_cannot_allow_an_expired_frame_to_write():
             ]
 
     def delayed_control_check():
-        now[0] += 1_100_000_000
+        now[0] += 3_100_000_000
         return True
 
-    policy = DecisionPolicy(PolicyConfig(confirmations=1))
+    policy = DecisionPolicy()
     policy.learn_baseline([])
     policy.arm()
     memory = MemoryClipboard()
@@ -75,7 +75,7 @@ def test_deadline_is_cleared_after_clipboard_failure():
         def write(self, code):
             raise RuntimeError("busy")
 
-    policy = DecisionPolicy(PolicyConfig(confirmations=1))
+    policy = DecisionPolicy()
     policy.learn_baseline([])
     policy.arm()
     pipeline = Pipeline(

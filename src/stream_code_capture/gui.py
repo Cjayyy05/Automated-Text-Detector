@@ -41,7 +41,7 @@ from .live import Controls, LiveConfig, LiveSession
 from .native_scope import NativeScope
 from .notifications import CopySound, play_copy_sound, validate_sound_file
 from .ocr import RapidRecognizer
-from .policy import DecisionPolicy, code_text
+from .policy import DecisionPolicy, assess_candidate, code_text, context_kind
 
 EventSink = Callable[[dict[str, Any]], None]
 
@@ -49,31 +49,49 @@ EventSink = Callable[[dict[str, Any]], None]
 def describe_ocr(event: dict[str, Any], policy: DecisionPolicy) -> str:
     status = event["status"]
     title = f"Last decision: {status}"
-    if status == "confirming":
-        title += " · another changed frame is required"
     lines = [
         TextLine(row["text"], row["confidence"], Rect(**row["box"]), row["rejection"])
         for row in event["lines"]
     ]
-    parsed = [(line, code_text(line, policy.config.profile)) for line in lines]
-    parsed.sort(key=lambda pair: pair[1] is None)
+    profile = policy.config.profile
+    parsed = [(line, code_text(line, profile), context_kind(line.text, profile)) for line in lines]
+    anchors = [line.box for line, code, kind in parsed if code is not None or kind is not None]
+
+    def priority(row: tuple[TextLine, str | None, str | None]) -> tuple[bool, bool, int]:
+        line, code, kind = row
+        box = line.box
+        distance = min(
+            (
+                max(0, box.left - anchor.right, anchor.left - box.right)
+                + max(0, box.top - anchor.bottom, anchor.top - box.bottom)
+                for anchor in anchors
+            ),
+            default=0,
+        )
+        return code is None, kind is None, distance
+
+    parsed.sort(key=priority)
     details = [title]
-    for line, code in parsed[:8]:
-        if line.rejection:
-            reason = line.rejection
-        elif code is None:
-            reason = "context or unsupported code format"
-        elif not policy.config.min_confidence <= line.confidence <= 1:
-            reason = "confidence outside required range"
-        elif code not in event["candidates"]:
-            reason = "context or quality requirements not met"
-        elif code in policy.suppressed:
-            reason = "suppressed by baseline"
-        elif code in policy.copied and code != event["code"]:
-            reason = "already copied"
-        else:
-            reason = "eligible candidate"
-        details.append(f"{line.text[:160]} [{line.confidence:.3f}] · {reason}")
+    if status == "stale":
+        details.append("Expired frame. OCR evidence below cannot count toward confirmation.")
+    for line, _, kind in parsed[:8]:
+        code, reason = assess_candidate(line, lines, policy.config)
+        if code is not None:
+            if code in policy.suppressed:
+                reason = "suppressed by baseline"
+            elif code in policy.copied and code != event["code"]:
+                reason = "already copied"
+        elif kind is not None and not line.rejection:
+            reason = (
+                f"{kind} context"
+                if 0.75 <= line.confidence <= 1
+                else f"{kind} context below confidence threshold"
+            )
+        box = line.box
+        details.append(
+            f"{line.text[:160]} [{line.confidence:.3f}] "
+            f"({box.left},{box.top})–({box.right},{box.bottom}) · {reason}"
+        )
     if not lines:
         details.append("No OCR text in this observation.")
     elif len(lines) > 8:

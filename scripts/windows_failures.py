@@ -225,6 +225,8 @@ def main():
                             controls.send("stop")
                             return
                     controls.send("arm")
+                if event["event"] == "armed" and not state["visible"]:
+                    interrupt[0] = case in {"stop", "disarm"}
                     state["blank"] = case == "blank"
                     state["freeze"] = case == "static"
                     state["visible"] = case not in {"blank", "static"}
@@ -234,8 +236,6 @@ def main():
                         timer.start()
                 if case == "static" and event["event"] == "status":
                     controls.send("stop")
-                if event.get("status") == "confirming" and case in {"stop", "disarm"}:
-                    interrupt[0] = True
                 if event.get("status") == "disarmed" and races:
                     controls.send("stop")
                 if event.get("status") == "clipboard_failed":
